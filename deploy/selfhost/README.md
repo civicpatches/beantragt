@@ -6,10 +6,11 @@ beantragt.ai has not reached version 1.0 yet. Interfaces, data model and configu
 
 ## First start
 
-The source archive of a backend release is downloaded and extracted. Startup requires Docker with Compose 2.17 or later and internet access to download the images. On ARM64, startup requires Docker support for amd64 images because veraPDF is supplied as an amd64 image.
+The open repository is cloned. Its `main` branch always contains the latest release, and `git clone --branch <tag>` clones a specific release, for example `--branch v0.7.2`. Without Git, the [source archive (ZIP)](https://github.com/civicpatches/beantragt/archive/refs/heads/main.zip) is downloaded and extracted; the folder is then named `beantragt-main`. Startup requires Docker with Compose 2.17 or later and internet access to download the images. On ARM64, startup requires Docker support for amd64 images because veraPDF is supplied as an amd64 image.
 
 ```sh
-cd deploy/selfhost
+git clone https://github.com/civicpatches/beantragt.git
+cd beantragt/deploy/selfhost
 cp .env.example .env
 docker compose up -d --wait --wait-timeout 300
 ```

@@ -6,10 +6,11 @@ beantragt.ai hat Version 1.0 noch nicht erreicht. Schnittstellen, Datenmodell un
 
 ## Erster Start
 
-Der Quellcode eines Backend-Releases wird heruntergeladen und entpackt. Der Start setzt Docker mit Compose ab 2.17 und Internetzugriff für den Image-Download voraus. Auf ARM64 setzt der Start die Unterstützung von amd64-Images durch Docker voraus, da veraPDF als amd64-Image vorliegt.
+Das offene Repository wird geklont. Der Zweig `main` enthält immer das neueste Release, `git clone --branch <Tag>` klont ein bestimmtes Release, zum Beispiel `--branch v0.7.2`. Ohne Git wird das [Quellarchiv (ZIP)](https://github.com/civicpatches/beantragt/archive/refs/heads/main.zip) heruntergeladen und entpackt, der Ordner heißt dann `beantragt-main`. Der Start setzt Docker mit Compose ab 2.17 und Internetzugriff für den Image-Download voraus. Auf ARM64 setzt der Start die Unterstützung von amd64-Images durch Docker voraus, da veraPDF als amd64-Image vorliegt.
 
 ```sh
-cd deploy/selfhost
+git clone https://github.com/civicpatches/beantragt.git
+cd beantragt/deploy/selfhost
 cp .env.example .env
 docker compose up -d --wait --wait-timeout 300
 ```
