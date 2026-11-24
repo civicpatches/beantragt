@@ -97,7 +97,8 @@ jobs:
           }
 
           publish_image() {
-            local image="ghcr.io/civicpatches/beantragt-$1" context="$2"
+            # Images are named after the repository (beantragt), side services add their role.
+            local image="ghcr.io/civicpatches/beantragt${1:+-$1}" context="$2"
             local digest manifest failure
             shift 2
             failure="$(mktemp)"
@@ -147,10 +148,10 @@ jobs:
             fi
           }
 
-          publish_image drupal .
-          drupal="$(image_digest ghcr.io/civicpatches/beantragt-drupal)"
+          publish_image "" .
+          drupal="$(image_digest ghcr.io/civicpatches/beantragt)"
           publish_image nginx . --file Dockerfile.nginx \
-            --build-arg "DRUPAL_IMAGE=ghcr.io/civicpatches/beantragt-drupal@$drupal"
+            --build-arg "DRUPAL_IMAGE=ghcr.io/civicpatches/beantragt@$drupal"
           publish_image docgen services/docgen
 
   gitleaks:

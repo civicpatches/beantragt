@@ -52,7 +52,7 @@ services:
       - "127.0.0.1:${MAIL_PORT:-18025}:8025"
 
   drupal:
-    image: "ghcr.io/civicpatches/beantragt-drupal:${BEANTRAGT_VERSION:?set BEANTRAGT_VERSION in .env}"
+    image: "ghcr.io/civicpatches/beantragt:${BEANTRAGT_VERSION:?set BEANTRAGT_VERSION in .env}"
     extends:
       file: compose.mail.yaml
       service: "drupal-${BEANTRAGT_MAIL_MODE:-mailpit}"
@@ -122,7 +122,7 @@ services:
       - public-files:/app/data/web/sites/default/files:ro
 
   ui:
-    image: "ghcr.io/civicpatches/beantragt-ui:${BEANTRAGT_VERSION:?set BEANTRAGT_VERSION in .env}"
+    image: "ghcr.io/civicpatches/beantragt-ui-base:${BEANTRAGT_VERSION:?set BEANTRAGT_VERSION in .env}"
     entrypoint: [/bin/sh, -ec]
     command:
       - |
