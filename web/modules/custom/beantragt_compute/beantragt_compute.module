@@ -1,0 +1,101 @@
+<?php
+
+/**
+ * @file
+ * Primary module hooks for beantragt_compute module.
+ */
+
+declare(strict_types=1);
+
+use Drupal\beantragt_application\Entity\ApplicationInterface;
+use Drupal\beantragt_schema\Entity\FormSchemaInterface;
+
+/**
+ * Implements hook_ENTITY_TYPE_presave() for application.
+ *
+ * Evaluates all computed fields declared in the application's FormSchema and
+ * writes the authoritative results back into field_data, OVERWRITING any
+ * client-supplied value for computed field ids.
+ *
+ * SECURITY INVARIANT: A client must never be able to set a computed field value
+ * (e.g. spoof an approvalTier). This hook is the enforcement point. Because
+ * module weight is set BELOW beantragt_workflow in hook_install(), this presave
+ * fires BEFORE beantragt_workflow_application_presave(), allowing the workflow
+ * router to consume authoritative computed values.
+ */
+function beantragt_compute_application_presave(ApplicationInterface $application): void {
+  // Resolve the referenced FormSchema entity.
+  $schema_entity = $application->get('field_schema')->entity;
+  if (!$schema_entity instanceof FormSchemaInterface) {
+    return;
+  }
+
+  // Decode the FormSchema field_schema JSON into the definition array.
+  $schema_json = $schema_entity->get('field_schema')->value;
+  if ($schema_json === NULL || $schema_json === '') {
+    return;
+  }
+
+  try {
+    $schema_definition = json_decode($schema_json, TRUE, 512, JSON_THROW_ON_ERROR);
+  }
+  catch (\JsonException) {
+    return;
+  }
+
+  if (!is_array($schema_definition)) {
+    return;
+  }
+
+  // field_data is a string_long JSON blob keyed by schema field ids.
+  $data_json = $application->getData();
+  if ($data_json === NULL || $data_json === '') {
+    return;
+  }
+
+  try {
+    $submitted_values = json_decode($data_json, TRUE, 512, JSON_THROW_ON_ERROR);
+  }
+  catch (\JsonException) {
+    return;
+  }
+
+  if (!is_array($submitted_values)) {
+    return;
+  }
+
+  /** @var \Drupal\beantragt_compute_api\ComputedFieldEvaluatorInterface $evaluator */
+  $evaluator = \Drupal::service('beantragt_compute.evaluator');
+  $computed = $evaluator->evaluate($schema_definition, $submitted_values);
+  $declared_computed_ids = $evaluator->computedFieldIds($schema_definition);
+
+  // Nothing to enforce: no field is declared computed in this schema.
+  if ($declared_computed_ids === []) {
+    return;
+  }
+
+  // SECURITY INVARIANT: enforce over the FULL set of declared computed field
+  // ids, not just the ones that evaluated successfully. For each declared id we
+  // write the server-derived value, or NULL when the field was skipped (unknown
+  // fn, empty fn, computed-on-computed). We NEVER keep the client-supplied
+  // value for a computed field id -- a typo'd or not-yet-deployed function must
+  // not let a client freely set a field that may later feed routing.
+  $changed = FALSE;
+  foreach ($declared_computed_ids as $cid) {
+    $new_value = $computed[$cid] ?? NULL;
+    // Only mark dirty when the stored value actually changes, so a submission
+    // that never carried a computed field id and computed nothing is not
+    // needlessly re-serialized.
+    if (!array_key_exists($cid, $submitted_values) && $new_value === NULL) {
+      continue;
+    }
+    if (($submitted_values[$cid] ?? NULL) !== $new_value) {
+      $changed = TRUE;
+    }
+    $submitted_values[$cid] = $new_value;
+  }
+
+  if ($changed) {
+    $application->setData(json_encode($submitted_values, JSON_UNESCAPED_UNICODE));
+  }
+}

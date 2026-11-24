@@ -1,0 +1,21 @@
+administer application_comment entities:
+  title: 'Administer Application Comment entities'
+  description: 'Full administrative access to Application Comment entities.'
+  restrict access: true
+
+create application_comment entities:
+  title: 'Create Application Comment entities'
+  description: 'Allows creating comments on applications.'
+
+view application_comment entities:
+  title: 'View Application Comment entities'
+  description: 'Allows viewing comments on applications.'
+
+delete own application_comment entities:
+  title: 'Delete own Application Comment entities'
+  description: 'Allows deleting own messages on applications whose email confirmation is still open. Messages on submitted applications stay with the authority.'
+
+delete any application_comment entities:
+  title: 'Delete any Application Comment entities'
+  description: 'Allows deleting any comment on applications.'
+  restrict access: true

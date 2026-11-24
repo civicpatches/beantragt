@@ -1,0 +1,108 @@
+<?php
+
+/**
+ * @file
+ * Install, schema and status report of beantragt_nachreichung.
+ */
+
+declare(strict_types=1);
+
+use Drupal\beantragt_nachreichung\Repository\CoverCodeRepository;
+use Drupal\beantragt_nachreichung\Repository\EingangRepository;
+use Drupal\beantragt_nachreichung\Repository\NachforderungRepository;
+use Drupal\beantragt_nachreichung\Repository\NachreichungEventLog;
+use Drupal\group\Entity\GroupInterface;
+use Drupal\user\RoleInterface;
+
+/**
+ * Implements hook_schema().
+ */
+function beantragt_nachreichung_schema(): array {
+  return [
+    CoverCodeRepository::TABLE => CoverCodeRepository::schema(),
+    NachforderungRepository::TABLE => NachforderungRepository::schema(),
+    NachreichungEventLog::TABLE => NachreichungEventLog::schema(),
+    EingangRepository::TABLE => EingangRepository::schema(),
+  ];
+}
+
+/**
+ * Implements hook_install().
+ */
+function beantragt_nachreichung_install(): void {
+  _beantragt_nachreichung_grant_revert();
+}
+
+/**
+ * Grants "revert nachreichung" to the administrating roles.
+ */
+function _beantragt_nachreichung_grant_revert(): void {
+  $storage = \Drupal::entityTypeManager()->getStorage('user_role');
+  foreach (['department_admin', 'administrator'] as $id) {
+    $role = $storage->load($id);
+    if ($role instanceof RoleInterface) {
+      $role->grantPermission('revert nachreichung');
+      $role->save();
+    }
+  }
+}
+
+/**
+ * Adds receipt records (Nachreichung step 2) and the revert permission.
+ */
+function beantragt_nachreichung_update_10001(): string {
+  $schema = \Drupal::database()->schema();
+  $created = FALSE;
+  if (!$schema->tableExists(EingangRepository::TABLE)) {
+    $schema->createTable(EingangRepository::TABLE, EingangRepository::schema());
+    $created = TRUE;
+  }
+  _beantragt_nachreichung_grant_revert();
+  return $created ? 'Created the receipt table and granted the revert permission.' : 'Granted the revert permission.';
+}
+
+/**
+ * Implements hook_requirements().
+ *
+ * Errors when identifiers of a stored key version can no longer be resolved
+ * (key material missing or changed); warns per jurisdiction with cover
+ * sheets on and no holiday region.
+ */
+function beantragt_nachreichung_requirements(string $phase): array {
+  if ($phase !== 'runtime') {
+    return [];
+  }
+  $requirements = [];
+  $hasher = \Drupal::service('beantragt_nachreichung.hasher');
+  $broken = [];
+  foreach (\Drupal::service('beantragt_nachreichung.cover_codes')->versions() as $version) {
+    if (!$hasher->resolvable($version)) {
+      $broken[] = $version;
+    }
+  }
+  $requirements['beantragt_nachreichung_keys'] = [
+    'title' => t('Cover sheet identifiers'),
+    'value' => $broken === [] ? t('All key versions resolvable') : t('Cover sheet identifiers of key version @versions can no longer be resolved', ['@versions' => implode(', ', $broken)]),
+    'severity' => $broken === [] ? REQUIREMENT_OK : REQUIREMENT_ERROR,
+  ];
+  $section = \Drupal::service('beantragt_nachreichung.section');
+  $missing = [];
+  foreach (\Drupal::entityTypeManager()->getStorage('group')->loadByProperties(['type' => 'jur']) as $jurisdiction) {
+    if (!$jurisdiction instanceof GroupInterface || !$section->coverSheetFor($jurisdiction)) {
+      continue;
+    }
+    $docgen = \Drupal::service('beantragt_group.jurisdiction_config')->getSection($jurisdiction, 'docgen');
+    if (!is_string($docgen['holidayRegion'] ?? NULL)) {
+      $missing[] = (string) $jurisdiction->label();
+    }
+  }
+  if ($missing !== []) {
+    $requirements['beantragt_nachreichung_region'] = [
+      'title' => t('Cover sheets'),
+      'value' => t('No holiday region for: @list', ['@list' => implode(', ', $missing)]),
+      'description' => t('Cover sheets are on, but docgen.holidayRegion is missing; request letters and reprints are refused until it is set.'),
+      'severity' => REQUIREMENT_WARNING,
+    ];
+  }
+  return $requirements;
+}

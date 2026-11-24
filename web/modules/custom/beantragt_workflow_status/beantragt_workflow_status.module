@@ -1,0 +1,182 @@
+<?php
+
+/**
+ * @file
+ * Per-workspace workflow status definitions.
+ */
+
+declare(strict_types=1);
+
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\EntityStorageException;
+use Drupal\beantragt_workflow_status\Entity\WorkflowStatusInterface;
+use Drupal\group\Entity\GroupInterface;
+
+/**
+ * Implements hook_ENTITY_TYPE_insert() for group.
+ *
+ * Seeds the default workflow status set for newly created jurisdiction and
+ * organisation groups so every workspace has a usable status workflow out of
+ * the box. Seeding is idempotent and a no-op for unrelated group bundles.
+ */
+function beantragt_workflow_status_group_insert(EntityInterface $entity): void {
+  if (!$entity instanceof GroupInterface || !in_array($entity->bundle(), ['jur', 'org'], TRUE)) {
+    return;
+  }
+
+  // Skip during config sync; the workflow_status entity type may not yet be
+  // installed in the right order during an import.
+  if (\Drupal::isConfigSyncing()) {
+    return;
+  }
+
+  if (!\Drupal::entityTypeManager()->hasDefinition('workflow_status')) {
+    return;
+  }
+
+  /** @var \Drupal\beantragt_workflow_status\Service\WorkflowStatusSeeder $seeder */
+  $seeder = \Drupal::service('beantragt_workflow_status.status_seeder');
+  $seeder->seedForGroup($entity);
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_presave() for workflow_status.
+ */
+function beantragt_workflow_status_workflow_status_presave(EntityInterface $entity): void {
+  if (!$entity instanceof WorkflowStatusInterface) {
+    return;
+  }
+
+  if (!beantragt_workflow_status_current_user_can_write_group($entity)) {
+    throw new EntityStorageException('Current user may not write workflow statuses for this workspace.');
+  }
+
+  if (!$entity->isDefault()) {
+    return;
+  }
+
+  $group_id = $entity->getGroupId();
+  if ($group_id === NULL) {
+    return;
+  }
+
+  $storage = \Drupal::entityTypeManager()->getStorage('workflow_status');
+  $query = $storage->getQuery()
+    ->accessCheck(FALSE)
+    ->condition('field_group', $group_id)
+    ->condition('field_is_default', TRUE);
+
+  if (!$entity->isNew()) {
+    $query->condition('id', $entity->id(), '<>');
+  }
+
+  $ids = $query->execute();
+  if ($ids === []) {
+    return;
+  }
+
+  \Drupal::database()
+    ->update('workflow_status')
+    ->fields(['field_is_default' => 0])
+    ->condition('id', array_values($ids), 'IN')
+    ->execute();
+  $storage->resetCache(array_values($ids));
+}
+
+/**
+ * Checks whether the current account may write a status for its group.
+ */
+function beantragt_workflow_status_current_user_can_write_group(WorkflowStatusInterface $entity): bool {
+  // Seed and install scripts run in CLI and deliberately use entity API writes.
+  if (PHP_SAPI === 'cli') {
+    return TRUE;
+  }
+
+  $account = \Drupal::currentUser();
+  if ($account->hasPermission('bypass beantragt group scope')) {
+    return TRUE;
+  }
+  if (!$account->hasPermission('administer workflow_status entities')) {
+    return FALSE;
+  }
+
+  $group_id = $entity->getGroupId();
+  if ($group_id === NULL || !function_exists('_beantragt_group_account_has_group_admin_role')) {
+    return FALSE;
+  }
+
+  $group = \Drupal::entityTypeManager()->getStorage('group')->load($group_id);
+  if (!$group instanceof GroupInterface) {
+    return FALSE;
+  }
+  if (_beantragt_group_account_has_group_admin_role($group, $account)) {
+    return TRUE;
+  }
+
+  if ($group->bundle() === 'org'
+    && $group->hasField('field_jurisdiction')
+    && !$group->get('field_jurisdiction')->isEmpty()) {
+    $jurisdiction = $group->get('field_jurisdiction')->entity;
+    return $jurisdiction instanceof GroupInterface
+      && _beantragt_group_account_has_group_admin_role($jurisdiction, $account);
+  }
+
+  return FALSE;
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_predelete() for workflow_status.
+ */
+function beantragt_workflow_status_workflow_status_predelete(EntityInterface $entity): void {
+  if (!$entity instanceof WorkflowStatusInterface) {
+    return;
+  }
+
+  /** @var \Drupal\beantragt_workflow_status\Service\WorkflowStatusManager $manager */
+  $manager = \Drupal::service('beantragt_workflow_status.status_manager');
+  // The guard reads the forms fresh, never a list projection's index.
+  $manager->resetFormWorkflowIndex();
+  $blockers = $manager->deleteBlockers($entity);
+  if (!empty($blockers)) {
+    throw new EntityStorageException(sprintf(
+      'Cannot delete workflow status %s because it is protected: %s.',
+      $entity->id(),
+      implode(', ', $blockers),
+    ));
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_insert() for form_schema.
+ */
+function beantragt_workflow_status_form_schema_insert(EntityInterface $entity): void {
+  _beantragt_workflow_status_reset_form_index();
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_update() for form_schema.
+ */
+function beantragt_workflow_status_form_schema_update(EntityInterface $entity): void {
+  _beantragt_workflow_status_reset_form_index();
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_delete() for form_schema.
+ */
+function beantragt_workflow_status_form_schema_delete(EntityInterface $entity): void {
+  _beantragt_workflow_status_reset_form_index();
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_revision_delete() for form_schema.
+ */
+function beantragt_workflow_status_form_schema_revision_delete(EntityInterface $entity): void {
+  _beantragt_workflow_status_reset_form_index();
+}
+
+/**
+ * Forgets which statuses forms list (delete blockers), after a form change.
+ */
+function _beantragt_workflow_status_reset_form_index(): void {
+  \Drupal::service('beantragt_workflow_status.status_manager')->resetFormWorkflowIndex();
+}

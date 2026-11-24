@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:beantragt:test:contract:s05000039",
+  "type": "object",
+  "title": "Synthetic scalar delivery contract",
+  "properties": {
+    "syntheticCount": {
+      "type": "integer"
+    },
+    "syntheticFlag": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "syntheticCount",
+    "syntheticFlag"
+  ]
+}

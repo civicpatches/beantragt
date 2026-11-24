@@ -1,0 +1,70 @@
+administer application entities:
+  title: 'Administer Application entities'
+  description: 'Full administrative access to Application entities.'
+  restrict access: true
+
+view published application entities:
+  title: 'View published Application entities'
+  description: 'Should NOT be granted to anonymous users. Use "view own" instead.'
+  restrict access: true
+
+view unpublished application entities:
+  title: 'View unpublished Application entities'
+
+view own application entities:
+  title: 'View own Application entities'
+  description: 'Allows authenticated citizens to view applications linked to their account or claimed public submissions.'
+
+create application entities:
+  title: 'Create Application entities'
+
+edit own application entities:
+  title: 'Edit own Application entities'
+
+edit any application entities:
+  title: 'Edit any Application entities'
+
+edit application data entities:
+  title: 'Edit submitted Application data'
+  description: 'Allows staff users to edit submitted application field_data through the administrative data endpoint.'
+  restrict access: true
+
+view protected application data:
+  title: 'View protected Application data'
+  description: 'Allows scoped staff users to reveal encrypted sensitive field_data values on individual applications.'
+  restrict access: true
+
+delegate applications:
+  title: 'Delegate applications'
+  description: 'Allows scoped staff users to move applications to another organisation in the same jurisdiction.'
+  restrict access: true
+
+delete own application entities:
+  title: 'Delete own Application entities'
+  description: 'Deprecated: grants nothing. Submitted applications stay with the authority until retention or staff remove them.'
+
+delete any application entities:
+  title: 'Delete any Application entities'
+  description: 'Allows tenant-scoped administrators to permanently delete applications in workspaces they administer.'
+  restrict access: true
+
+administer application_attachment entities:
+  title: 'Administer Application Attachment entities'
+  description: 'Full administrative access to Application Attachment entities.'
+  restrict access: true
+
+create application_attachment entities:
+  title: 'Create Application Attachment entities'
+
+view application_attachment entities:
+  title: 'View Application Attachment entities'
+  description: 'Allows scoped users to view attachments through their related application.'
+
+delete application_attachment entities:
+  title: 'Delete Application Attachment entities'
+  restrict access: true
+
+manage quarantined application attachments:
+  title: 'Manage quarantined Application Attachment entities'
+  description: 'Allows scoped administrators to resolve quarantined attachments without downloading them.'
+  restrict access: true

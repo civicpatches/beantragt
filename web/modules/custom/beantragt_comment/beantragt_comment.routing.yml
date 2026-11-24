@@ -1,0 +1,116 @@
+# List all comments for an application.
+beantragt_comment.list:
+  path: '/api/comments/{application_id}'
+  defaults:
+    _controller: '\Drupal\beantragt_comment\Controller\CommentApiController::list'
+    _format: json
+  requirements:
+    _permission: 'view application_comment entities'
+    _user_is_logged_in: 'TRUE'
+    application_id: '[0-9A-Fa-f-]+'
+  methods: [GET]
+  options:
+    _auth:
+      - basic_auth
+      - cookie
+
+beantragt_comment.create:
+  path: '/api/comments/{application_id}'
+  defaults:
+    _controller: '\Drupal\beantragt_comment\Controller\CommentApiController::add'
+    _format: json
+  requirements:
+    _permission: 'create application_comment entities'
+    _csrf_request_header_token: 'TRUE'
+    application_id: '[0-9A-Fa-f-]+'
+  methods: [POST]
+  options:
+    _auth:
+      - basic_auth
+      - cookie
+
+# Upload an attachment for a comment.
+beantragt_comment.upload:
+  path: '/api/comments/{application_id}/upload'
+  defaults:
+    _controller: '\Drupal\beantragt_comment\Controller\CommentApiController::upload'
+    _format: json
+  requirements:
+    _permission: 'create application_comment entities'
+    _csrf_request_header_token: 'TRUE'
+    application_id: '[0-9A-Fa-f-]+'
+  methods: [POST]
+  options:
+    _auth:
+      - basic_auth
+      - cookie
+
+# Download an attachment that belongs to a visible application comment.
+beantragt_comment.attachment_download:
+  path: '/api/comments/{application_id}/attachments/{file_uuid}/download'
+  defaults:
+    _controller: '\Drupal\beantragt_comment\Controller\CommentApiController::downloadAttachment'
+  requirements:
+    _permission: 'view application_comment entities'
+    _user_is_logged_in: 'TRUE'
+    application_id: '[0-9A-Fa-f-]+'
+    file_uuid: '[0-9a-fA-F-]{36}'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+    _auth:
+      - basic_auth
+      - cookie
+
+# List public v1 comments for an authenticated user's application.
+beantragt_comment.api_v1_application_comments_list:
+  path: '/api/v1/applications/{application_uuid}/comments'
+  defaults:
+    _controller: '\Drupal\beantragt_comment\Controller\CommentApiController::listV1'
+    _format: json
+  requirements:
+    # Controller requires a logged-in citizen with permission and workspace scope.
+    _access: 'TRUE'
+    application_uuid: '[0-9a-fA-F-]{36}'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    _auth:
+      - basic_auth
+      - cookie
+
+beantragt_comment.api_v1_application_comments_create:
+  path: '/api/v1/applications/{application_uuid}/comments'
+  defaults:
+    _controller: '\Drupal\beantragt_comment\Controller\CommentApiController::addV1'
+    _format: json
+  requirements:
+    # Controller requires a logged-in citizen with permission, CSRF token and scope.
+    _access: 'TRUE'
+    application_uuid: '[0-9a-fA-F-]{36}'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    _auth:
+      - basic_auth
+      - cookie
+
+# Upload a public v1 comment attachment for an authenticated user's application.
+beantragt_comment.api_v1_application_comment_attachments_create:
+  path: '/api/v1/applications/{application_uuid}/comment-attachments'
+  defaults:
+    _controller: '\Drupal\beantragt_comment\Controller\CommentApiController::uploadV1'
+    _format: json
+  requirements:
+    # Controller requires a logged-in citizen with permission, CSRF token and scope.
+    _access: 'TRUE'
+    application_uuid: '[0-9a-fA-F-]{36}'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    _auth:
+      - basic_auth
+      - cookie

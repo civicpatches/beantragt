@@ -1,0 +1,1637 @@
+<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for beantragt_group module.
+ */
+
+declare(strict_types=1);
+
+use Drupal\Core\Config\FileStorage;
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Utility\UpdateException;
+use Drupal\group\Entity\GroupInterface;
+use Drupal\language\ConfigurableLanguageManagerInterface;
+
+/**
+ * Implements hook_install().
+ */
+function beantragt_group_install(): void {
+  $entity_type_manager = \Drupal::entityTypeManager();
+
+  _beantragt_group_ensure_settings();
+
+  // Ensure field_slug exists on both group types (also created via update_10003
+  // for existing installations, but needed here for fresh installs).
+  _beantragt_group_ensure_slug_field($entity_type_manager);
+  _beantragt_group_ensure_org_directory_fields($entity_type_manager);
+  _beantragt_group_ensure_org_parent_field($entity_type_manager);
+  _beantragt_group_ensure_jurisdiction_contact_email_field($entity_type_manager);
+  _beantragt_group_ensure_admin_form_displays();
+  _beantragt_group_ensure_admin_theme();
+
+  _beantragt_group_install_scope_field_storages();
+  _beantragt_group_ensure_workspace_inviter_scope();
+  _beantragt_group_ensure_scope_bypass_permissions();
+}
+
+/**
+ * Implements hook_uninstall().
+ *
+ * Removes Beantragt group scope base fields from scoped entity types.
+ */
+function beantragt_group_uninstall(): void {
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  $entity_types = ['form_schema', 'form_schema_group', 'application', 'applicant'];
+
+  foreach ($entity_types as $entity_type_id) {
+    foreach (['field_jurisdiction', 'field_organisation', 'field_group'] as $field_name) {
+      $field_storage = $update_manager->getFieldStorageDefinition($field_name, $entity_type_id);
+      if ($field_storage) {
+        $update_manager->uninstallFieldStorageDefinition($field_storage);
+        \Drupal::logger('beantragt_group')->info(
+          'Removed @field base field from @type.',
+          [
+            '@field' => $field_name,
+            '@type' => $entity_type_id,
+          ]
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_schema().
+ */
+function beantragt_group_schema(): array {
+  $schema['beantragt_group_invitations'] = _beantragt_group_invitation_schema();
+
+  return $schema;
+}
+
+/**
+ * Install field_group base field on applicant entity type.
+ */
+function beantragt_group_update_10001(): string {
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  $entity_type_id = 'applicant';
+  $entity_type_manager = \Drupal::entityTypeManager();
+
+  if (!$entity_type_manager->hasDefinition($entity_type_id)) {
+    return 'applicant entity type not found.';
+  }
+
+  $entity_type = $entity_type_manager->getDefinition($entity_type_id);
+
+  $field_definitions = beantragt_group_entity_base_field_info($entity_type);
+  if (isset($field_definitions['field_group'])) {
+    $field_definitions['field_group']->setName('field_group');
+    $field_definitions['field_group']->setTargetEntityTypeId($entity_type_id);
+    if (!$update_manager->getFieldStorageDefinition('field_group', $entity_type_id)) {
+      $update_manager->installFieldStorageDefinition(
+        'field_group',
+        $entity_type_id,
+        'beantragt_group',
+        $field_definitions['field_group']
+      );
+      return 'Installed field_group base field on applicant.';
+    }
+  }
+
+  return 'field_group already exists on applicant.';
+}
+
+/**
+ * Add field_reference_pattern to org group type.
+ *
+ * This field stores the configurable reference number pattern per
+ * organisation. Tokens: {ORG}, {YEAR}, {SEQ}, {SEQ:N}, {FORM_CODE},
+ * {UUID_SHORT}. Default pattern: "{ORG}-{YEAR}-{SEQ:5}".
+ */
+function beantragt_group_update_10002(): string {
+  $messages = [];
+  $entity_type_manager = \Drupal::entityTypeManager();
+
+  // Create field storage if it does not exist.
+  $field_storage_config = $entity_type_manager->getStorage('field_storage_config');
+  $storage = $field_storage_config->load('group.field_reference_pattern');
+  if (!$storage) {
+    $storage = $field_storage_config->create([
+      'field_name' => 'field_reference_pattern',
+      'entity_type' => 'group',
+      'type' => 'string',
+      'settings' => [
+        'max_length' => 128,
+        'is_ascii' => TRUE,
+        'case_sensitive' => FALSE,
+      ],
+      'cardinality' => 1,
+      'translatable' => FALSE,
+    ]);
+    $storage->save();
+    $messages[] = 'Created field_reference_pattern field storage.';
+  }
+
+  // Create field instance on org bundle if it does not exist.
+  $field_config = $entity_type_manager->getStorage('field_config');
+  $field = $field_config->load('group.org.field_reference_pattern');
+  if (!$field) {
+    $field = $field_config->create([
+      'field_name' => 'field_reference_pattern',
+      'entity_type' => 'group',
+      'bundle' => 'org',
+      'label' => 'Aktenzeichen-Muster',
+      'description' => 'Muster fuer Vorgangsnummern. Tokens: {ORG}, {YEAR}, {SEQ}, {SEQ:N} (N = Ziffern), {FORM_CODE}, {UUID_SHORT}. Beispiel: "{ORG}-{YEAR}-{SEQ:5}" ergibt "FRE-2026-00001". Leer lassen fuer Standard-Muster.',
+      'required' => FALSE,
+      'default_value' => [
+        ['value' => '{ORG}-{YEAR}-{SEQ:5}'],
+      ],
+    ]);
+    $field->save();
+    $messages[] = 'Created field_reference_pattern field on org group type.';
+  }
+  else {
+    $messages[] = 'field_reference_pattern already exists on org group type.';
+  }
+
+  return implode(' ', $messages);
+}
+
+/**
+ * Add field_slug to jur and org group types.
+ *
+ * URL-safe slug for hierarchical routing:
+ * /kreis-slug/stadt-slug/amt-slug.
+ *
+ * Must be unique per bundle, lowercase, alphanumeric + hyphens.
+ */
+function beantragt_group_update_10003(): string {
+  $entity_type_manager = \Drupal::entityTypeManager();
+  $messages = _beantragt_group_ensure_slug_field($entity_type_manager);
+
+  // Backfill slugs for existing groups (generate from label).
+  $group_storage = $entity_type_manager->getStorage('group');
+  $groups = $group_storage->loadMultiple();
+  $backfilled = 0;
+  foreach ($groups as $group) {
+    if ($group->hasField('field_slug') && $group->get('field_slug')->isEmpty()) {
+      $slug = _beantragt_group_slugify($group->label() ?? '');
+      if ($slug) {
+        $group->set('field_slug', $slug);
+        $group->save();
+        $backfilled++;
+      }
+    }
+  }
+  if ($backfilled > 0) {
+    $messages[] = "Backfilled slugs for $backfilled existing groups.";
+  }
+
+  return implode(' ', $messages);
+}
+
+/**
+ * Adds explicit jurisdiction and organisation base fields.
+ */
+function beantragt_group_update_10004(): string {
+  $messages = _beantragt_group_install_scope_field_storages();
+  $messages[] = 'Skipped historical data backfill.';
+
+  return implode(' ', $messages);
+}
+
+/**
+ * Ensures scope bypass is limited to trusted platform administrators.
+ */
+function beantragt_group_update_10005(): string {
+  $messages = [];
+  if (_beantragt_group_ensure_scope_bypass_permissions()) {
+    $messages[] = 'Ensured Beantragt group scope bypass permissions.';
+  }
+  else {
+    $messages[] = 'No trusted platform roles found for Beantragt group scope bypass.';
+  }
+
+  // Until 15.11.2026 this hook also added every administrator and
+  // department_admin to every group. It no longer writes memberships.
+  return implode(' ', $messages);
+}
+
+/**
+ * Grant scope bypass to trusted platform roles.
+ */
+function beantragt_group_update_10006(): string {
+  return _beantragt_group_ensure_scope_bypass_permissions()
+    ? 'Ensured Beantragt group scope bypass permissions.'
+    : 'No trusted platform roles found for Beantragt group scope bypass.';
+}
+
+/**
+ * Installs and backfills form schema group scope fields.
+ */
+function beantragt_group_update_10007(): string {
+  $messages = _beantragt_group_install_scope_field_storages();
+  $entity_type_manager = \Drupal::entityTypeManager();
+
+  if (!$entity_type_manager->hasDefinition('form_schema_group')) {
+    $messages[] = 'form_schema_group entity type not found.';
+    return implode(' ', $messages);
+  }
+
+  $storage = $entity_type_manager->getStorage('form_schema_group');
+  $ids = $storage->getQuery()
+    ->accessCheck(FALSE)
+    ->execute();
+  $backfilled = 0;
+
+  foreach ($storage->loadMultiple($ids) as $schema_group) {
+    if (!$schema_group instanceof EntityInterface
+      || !_beantragt_group_entity_scope_is_empty($schema_group)
+      || !$schema_group->hasField('field_schemas')
+      || $schema_group->get('field_schemas')->isEmpty()) {
+      continue;
+    }
+
+    $schemas = $schema_group->get('field_schemas')->referencedEntities();
+    $first_schema = reset($schemas);
+    if (!$first_schema instanceof EntityInterface) {
+      continue;
+    }
+
+    _beantragt_group_copy_scope_from_schema($schema_group, $first_schema, TRUE);
+    _beantragt_group_normalize_scope_fields($schema_group);
+    _beantragt_group_assert_related_schemas_share_scope($schema_group, $schemas);
+    if (!_beantragt_group_entity_scope_is_empty($schema_group)) {
+      $schema_group->save();
+      $backfilled++;
+    }
+  }
+
+  $messages[] = sprintf('Backfilled scope on %d form schema groups.', $backfilled);
+
+  return implode(' ', $messages);
+}
+
+/**
+ * Adds the workspace inviter role and optional user jurisdiction scope.
+ */
+function beantragt_group_update_10008(): string {
+  return implode(' ', _beantragt_group_ensure_workspace_inviter_scope());
+}
+
+/**
+ * Requires organisations to reference a jurisdiction.
+ */
+function beantragt_group_update_10009(): string {
+  return implode(' ', _beantragt_group_ensure_org_jurisdiction_required());
+}
+
+/**
+ * Creates Beantragt group settings config on existing installations.
+ */
+function beantragt_group_update_10010(): string {
+  return implode(' ', _beantragt_group_ensure_settings());
+}
+
+/**
+ * Retains a historical update number.
+ */
+function beantragt_group_update_10011(): string {
+  return 'No data change.';
+}
+
+/**
+ * Retains a historical update number.
+ */
+function beantragt_group_update_10012(): string {
+  return 'No data change.';
+}
+
+/**
+ * Retains a historical update number.
+ */
+function beantragt_group_update_10013(): string {
+  return 'No data change.';
+}
+
+/**
+ * Creates the workspace invite token table.
+ */
+function beantragt_group_update_10014(): string {
+  $database_schema = \Drupal::database()->schema();
+  if ($database_schema->tableExists('beantragt_group_invitations')) {
+    return 'beantragt_group_invitations table already exists.';
+  }
+
+  $database_schema->createTable('beantragt_group_invitations', _beantragt_group_invitation_schema());
+
+  return 'Created beantragt_group_invitations table.';
+}
+
+/**
+ * Adds workspace invite URL settings and mail config.
+ */
+function beantragt_group_update_10015(): string {
+  $messages = _beantragt_group_ensure_settings();
+  $messages[] = implode(' ', _beantragt_group_ensure_mail_config());
+
+  return implode(' ', array_filter($messages));
+}
+
+/**
+ * Adds optional external directory metadata fields to org groups.
+ */
+function beantragt_group_update_10016(): string {
+  return implode(' ', _beantragt_group_ensure_org_directory_fields(\Drupal::entityTypeManager()));
+}
+
+/**
+ * Retains a historical membership update number.
+ *
+ * Kept under its number so the update registry stays intact; it writes
+ * nothing. Memberships are granted explicitly (FachadministrationGrant).
+ */
+function beantragt_group_update_10017(): string {
+  return 'No membership change: a Fachadministration is granted explicitly, never derived from a site role.';
+}
+
+/**
+ * Adds optional parent organisation references to org groups.
+ */
+function beantragt_group_update_10018(): string {
+  return implode(' ', _beantragt_group_ensure_org_parent_field(\Drupal::entityTypeManager()));
+}
+
+/**
+ * Removes global group-scope bypass from the Nuxt service account.
+ */
+function beantragt_group_update_10019(): string {
+  return _beantragt_group_ensure_scope_bypass_permissions()
+    ? 'Ensured Beantragt group scope bypass permissions.'
+    : 'No trusted platform roles found for Beantragt group scope bypass.';
+}
+
+/**
+ * Ensures group configuration content fields.
+ */
+function beantragt_group_update_10021(): string {
+  return implode(' ', _beantragt_group_ensure_config_content_fields(\Drupal::entityTypeManager()));
+}
+
+/**
+ * Adds the contact email field to jurisdiction groups for mail fallback.
+ */
+function beantragt_group_update_10022(): string {
+  return implode(' ', _beantragt_group_ensure_jurisdiction_contact_email_field(\Drupal::entityTypeManager()));
+}
+
+/**
+ * Retains a historical update number.
+ */
+function beantragt_group_update_10023(): string {
+  return 'No data change.';
+}
+
+/**
+ * Retains a historical update number.
+ */
+function beantragt_group_update_10024(): string {
+  return 'No data change.';
+}
+
+/**
+ * Retains a historical update number.
+ */
+function beantragt_group_update_10025(): string {
+  return 'No data change.';
+}
+
+/**
+ * Ensures group configuration content fields.
+ */
+function beantragt_group_update_10026(): string {
+  return implode(' ', _beantragt_group_ensure_config_content_fields(\Drupal::entityTypeManager()));
+}
+
+/**
+ * Adds widgets for every configurable jurisdiction and organisation field.
+ */
+function beantragt_group_update_10027(): string {
+  $added = _beantragt_group_ensure_admin_form_displays();
+
+  return $added === 0
+    ? 'Workspace form displays already contain all configurable fields.'
+    : sprintf('Added %d missing workspace form display widgets.', $added);
+}
+
+/**
+ * Updates the jurisdiction JSON field help for the Drupal admin backstop.
+ */
+function beantragt_group_update_10028(): string {
+  $field = \Drupal::entityTypeManager()
+    ->getStorage('field_config')
+    ->load('group.jur.field_jur_config');
+  if (!$field instanceof EntityInterface) {
+    return 'Jurisdiction JSON field is not installed.';
+  }
+
+  $field->set(
+    'description',
+    'Complete jurisdiction configuration as JSON. Invalid or unsupported values are rejected. Prefer the Settings UI for validated, conflict-safe production changes.',
+  );
+  $field->save();
+
+  return 'Updated jurisdiction JSON field help for platform administrators.';
+}
+
+/**
+ * Makes the Beantragt-branded Gin administration theme reproducible.
+ */
+function beantragt_group_update_10029(): string {
+  _beantragt_group_ensure_admin_theme();
+
+  return 'Configured Gin as the branded default and administration theme.';
+}
+
+/**
+ * Persists complete default form displays for workspace entities.
+ *
+ * @return int
+ *   The number of widgets added across all displays.
+ */
+function _beantragt_group_ensure_admin_form_displays(): int {
+  /** @var \Drupal\Core\Entity\EntityDisplayRepositoryInterface $repository */
+  $repository = \Drupal::service('entity_display.repository');
+  /** @var \Drupal\beantragt_group\Service\AdminFormDisplayCompleter $completer */
+  $completer = \Drupal::service('beantragt_group.admin_form_display_completer');
+
+  $added = 0;
+  foreach (['jur', 'org'] as $bundle) {
+    $form_display = $repository->getFormDisplay('group', $bundle);
+    $bundle_added = $completer->complete($form_display, 'group', $bundle);
+    if ($bundle_added === 0) {
+      continue;
+    }
+
+    $form_display->save();
+    $added += $bundle_added;
+  }
+
+  return $added;
+}
+
+/**
+ * Installs and configures the branded Gin administration experience.
+ */
+function _beantragt_group_ensure_admin_theme(): void {
+  /** @var \Drupal\Core\Extension\ThemeInstallerInterface $theme_installer */
+  $theme_installer = \Drupal::service('theme_installer');
+  $new_gin_install = !\Drupal::service('theme_handler')->themeExists('gin');
+  $theme_installer->install(['gin']);
+
+  $config_factory = \Drupal::configFactory();
+  $config_factory->getEditable('system.theme')
+    ->set('admin', 'gin')
+    ->set('default', 'gin')
+    ->save();
+  $settings = $config_factory->getEditable('gin.settings');
+  if ($new_gin_install) {
+    // Retain the established toolbar preference. Core Navigation takes
+    // precedence on profiles where it is enabled.
+    $settings->set('classic_toolbar', 'vertical');
+  }
+  $settings
+    ->set('logo.use_default', FALSE)
+    ->set('logo.path', 'modules/custom/beantragt_group/assets/beantragt-admin-logo.svg')
+    ->set('favicon.use_default', FALSE)
+    ->set('favicon.path', 'modules/custom/beantragt_group/assets/beantragt-admin-favicon.svg')
+    ->set('favicon.mimetype', 'image/svg+xml')
+    ->save();
+}
+
+/**
+ * Ensures field_slug exists on jur and org group types.
+ *
+ * Called from both hook_install() (fresh) and update_10003 (existing).
+ *
+ * @param \Drupal\Core\Entity\EntityTypeManagerInterface $entity_type_manager
+ *   The entity type manager.
+ *
+ * @return string[]
+ *   Messages describing what was done.
+ */
+function _beantragt_group_ensure_slug_field($entity_type_manager): array {
+  $messages = [];
+
+  $field_storage_config = $entity_type_manager->getStorage('field_storage_config');
+  $storage = $field_storage_config->load('group.field_slug');
+  if (!$storage) {
+    $field_storage_config->create([
+      'field_name' => 'field_slug',
+      'entity_type' => 'group',
+      'type' => 'string',
+      'settings' => [
+        'max_length' => 128,
+        'is_ascii' => TRUE,
+        'case_sensitive' => FALSE,
+      ],
+      'cardinality' => 1,
+      'translatable' => FALSE,
+    ])->save();
+    $messages[] = 'Created field_slug field storage.';
+  }
+
+  $field_config = $entity_type_manager->getStorage('field_config');
+
+  if (!$field_config->load('group.jur.field_slug')) {
+    $field_config->create([
+      'field_name' => 'field_slug',
+      'entity_type' => 'group',
+      'bundle' => 'jur',
+      'label' => 'URL Slug',
+      'description' => 'URL-safe identifier for routing. Lowercase, alphanumeric + hyphens.',
+      'required' => FALSE,
+    ])->save();
+    $messages[] = 'Added field_slug to jur group type.';
+  }
+
+  if (!$field_config->load('group.org.field_slug')) {
+    $field_config->create([
+      'field_name' => 'field_slug',
+      'entity_type' => 'group',
+      'bundle' => 'org',
+      'label' => 'URL Slug',
+      'description' => 'URL-safe identifier for routing. Lowercase, alphanumeric + hyphens.',
+      'required' => FALSE,
+    ])->save();
+    $messages[] = 'Added field_slug to org group type.';
+  }
+
+  return $messages;
+}
+
+/**
+ * Ensures optional Enterprise directory metadata exists on org groups.
+ *
+ * The fields intentionally do not implement AD/Entra sync behavior. They
+ * reserve stable storage for a later Enterprise connector while leaving
+ * Organisations locally managed when the fields are empty.
+ *
+ * @param \Drupal\Core\Entity\EntityTypeManagerInterface $entity_type_manager
+ *   The entity type manager.
+ *
+ * @return string[]
+ *   Messages describing what was done.
+ */
+function _beantragt_group_ensure_org_directory_fields($entity_type_manager): array {
+  $messages = [];
+  $field_storage_config = $entity_type_manager->getStorage('field_storage_config');
+  $field_config = $entity_type_manager->getStorage('field_config');
+
+  $fields = [
+    'field_directory_provider' => [
+      'type' => 'string',
+      'settings' => [
+        'max_length' => 64,
+        'is_ascii' => TRUE,
+        'case_sensitive' => FALSE,
+      ],
+      'label' => 'Directory-Provider',
+      'description' => 'Optionaler Quelltyp für extern verwaltete Dienststellen, z. B. active_directory oder entra_id. Leer bedeutet lokal verwaltet.',
+    ],
+    'field_directory_external_id' => [
+      'type' => 'string',
+      'settings' => [
+        'max_length' => 255,
+        'is_ascii' => FALSE,
+        'case_sensitive' => TRUE,
+      ],
+      'label' => 'Externe Directory-ID',
+      'description' => 'Stabile externe Objekt-ID aus dem Directory, z.B. objectGUID oder Entra id. Wird fuer spaetere Syncs nicht aus dem Label abgeleitet.',
+    ],
+    'field_directory_dn' => [
+      'type' => 'string_long',
+      'settings' => [],
+      'label' => 'Directory-DN',
+      'description' => 'Optionaler Distinguished Name aus LDAP/Active Directory. Nur Metadatum fuer Enterprise-Syncs.',
+    ],
+    'field_directory_parent_id' => [
+      'type' => 'string',
+      'settings' => [
+        'max_length' => 255,
+        'is_ascii' => FALSE,
+        'case_sensitive' => TRUE,
+      ],
+      'label' => 'Externe Parent-ID',
+      'description' => 'Optionaler externer Parent-Identifier zur Vorbereitung hierarchischer Directory-Importe. Wird aktuell nicht fuer Routing verwendet.',
+    ],
+    'field_directory_sync_state' => [
+      'type' => 'string',
+      'settings' => [
+        'max_length' => 32,
+        'is_ascii' => TRUE,
+        'case_sensitive' => FALSE,
+      ],
+      'label' => 'Directory-Sync-Status',
+      'description' => 'Optionaler Sync-Status fuer Enterprise-Directory-Importe, z.B. imported, disabled oder conflict. Leer bedeutet lokal verwaltet.',
+    ],
+  ];
+
+  foreach ($fields as $field_name => $definition) {
+    if (!$field_storage_config->load("group.$field_name")) {
+      $field_storage_config->create([
+        'field_name' => $field_name,
+        'entity_type' => 'group',
+        'type' => $definition['type'],
+        'settings' => $definition['settings'],
+        'cardinality' => 1,
+        'translatable' => FALSE,
+      ])->save();
+      $messages[] = "Created $field_name field storage.";
+    }
+
+    if (!$field_config->load("group.org.$field_name")) {
+      $field_config->create([
+        'field_name' => $field_name,
+        'entity_type' => 'group',
+        'bundle' => 'org',
+        'label' => $definition['label'],
+        'description' => $definition['description'],
+        'required' => FALSE,
+        'translatable' => FALSE,
+      ])->save();
+      $messages[] = "Added $field_name to org group type.";
+    }
+  }
+
+  return $messages ?: ['Org directory metadata fields already exist.'];
+}
+
+/**
+ * Ensures optional parent organisation references exist on org groups.
+ *
+ * This keeps the public jurisdiction as the access boundary while allowing
+ * imported department or team structures to preserve their internal hierarchy.
+ *
+ * @param \Drupal\Core\Entity\EntityTypeManagerInterface $entity_type_manager
+ *   The entity type manager.
+ *
+ * @return string[]
+ *   Messages describing what was done.
+ */
+function _beantragt_group_ensure_org_parent_field($entity_type_manager): array {
+  $messages = [];
+  $field_storage_config = $entity_type_manager->getStorage('field_storage_config');
+  $field_config = $entity_type_manager->getStorage('field_config');
+
+  if (!$field_storage_config->load('group.field_parent_org')) {
+    $field_storage_config->create([
+      'field_name' => 'field_parent_org',
+      'entity_type' => 'group',
+      'type' => 'entity_reference',
+      'settings' => [
+        'target_type' => 'group',
+      ],
+      'cardinality' => 1,
+      'translatable' => FALSE,
+    ])->save();
+    $messages[] = 'Created field_parent_org field storage.';
+  }
+
+  if (!$field_config->load('group.org.field_parent_org')) {
+    $field_config->create([
+      'field_name' => 'field_parent_org',
+      'entity_type' => 'group',
+      'bundle' => 'org',
+      'label' => 'Übergeordnete Dienststelle',
+      'description' => 'Optionale übergeordnete Dienststelle für importierte Amts-, Abteilungs- oder Teamhierarchien.',
+      'required' => FALSE,
+      'translatable' => FALSE,
+      'settings' => [
+        'handler' => 'default:group',
+        'handler_settings' => [
+          'target_bundles' => [
+            'org' => 'org',
+          ],
+          'sort' => [
+            'field' => 'label',
+            'direction' => 'ASC',
+          ],
+          'auto_create' => FALSE,
+          'auto_create_bundle' => '',
+        ],
+      ],
+    ])->save();
+    $messages[] = 'Added field_parent_org to org group type.';
+  }
+
+  return $messages ?: ['Org parent field already exists.'];
+}
+
+/**
+ * Ensures jurisdiction groups can carry a central notification mailbox.
+ */
+function _beantragt_group_ensure_jurisdiction_contact_email_field($entity_type_manager): array {
+  $messages = [];
+  $field_storage = $entity_type_manager->getStorage('field_storage_config');
+  $storage = $field_storage->load('group.field_org_email');
+  if (!$storage) {
+    $storage = $field_storage->create([
+      'field_name' => 'field_org_email',
+      'entity_type' => 'group',
+      'type' => 'email',
+      'cardinality' => 1,
+      'translatable' => FALSE,
+    ]);
+    $storage->save();
+    $messages[] = 'Created field_org_email field storage.';
+  }
+
+  $field_config = $entity_type_manager->getStorage('field_config');
+  if (!$field_config->load('group.jur.field_org_email')) {
+    $field_config->create([
+      'field_name' => 'field_org_email',
+      'entity_type' => 'group',
+      'bundle' => 'jur',
+      'label' => 'Kontakt-E-Mail',
+      'description' => 'Kontakt-E-Mail-Adresse fuer zentrale Benachrichtigungen dieser Jurisdiction.',
+      'required' => FALSE,
+      'translatable' => FALSE,
+      'settings' => [],
+    ])->save();
+    $messages[] = 'Added field_org_email to jurisdiction group type.';
+  }
+
+  return $messages ?: ['Jurisdiction contact email field already exists.'];
+}
+
+/**
+ * Ensures the fictional example jurisdiction and its offices.
+ *
+ * @return string[]
+ *   Changes made to the example groups.
+ */
+function _beantragt_group_ensure_musterstadt_example($entity_type_manager): array {
+  $messages = [];
+  $group_storage = $entity_type_manager->getStorage('group');
+
+  $stadt = _beantragt_group_find_group_by_slug_or_label('jur', 'musterstadt', 'Stadt Musterstadt')
+    ?? _beantragt_group_find_group_by_slug_or_label('jur', 'stadt-musterstadt', 'Musterstadt');
+  if (!$stadt) {
+    $stadt = $group_storage->create([
+      'type' => 'jur',
+      'label' => 'Stadt Musterstadt',
+      'field_platform_name' => 'Stadt Musterstadt',
+      'field_org_email' => 'service@musterstadt.example.org',
+      'field_email_footer' => 'Mit freundlichen Grüßen, Ihre Stadtverwaltung Musterstadt',
+      'field_slug' => 'musterstadt',
+    ]);
+    $stadt->save();
+    $messages[] = sprintf('Created city jurisdiction "Stadt Musterstadt" (id=%s).', $stadt->id());
+  }
+  else {
+    $changed = FALSE;
+    $changed = _beantragt_group_set_field_if_changed($stadt, 'label', 'Stadt Musterstadt') || $changed;
+    $changed = _beantragt_group_set_field_if_changed($stadt, 'field_slug', 'musterstadt') || $changed;
+    // The organisation name is a default for a new demo city only: an
+    // existing installation keeps whatever its administration set.
+    if ($stadt->hasField('field_platform_name') && $stadt->get('field_platform_name')->isEmpty()) {
+      $changed = _beantragt_group_set_field_if_changed($stadt, 'field_platform_name', 'Stadt Musterstadt') || $changed;
+    }
+    if ($stadt->hasField('field_org_email') && $stadt->get('field_org_email')->isEmpty()) {
+      $changed = _beantragt_group_set_field_if_changed($stadt, 'field_org_email', 'service@musterstadt.example.org') || $changed;
+    }
+    if ($stadt->hasField('field_parent_jurisdiction') && !$stadt->get('field_parent_jurisdiction')->isEmpty()) {
+      $stadt->set('field_parent_jurisdiction', NULL);
+      $changed = TRUE;
+    }
+    if ($changed) {
+      $stadt->save();
+      $messages[] = 'Updated city jurisdiction "Stadt Musterstadt".';
+    }
+  }
+
+  if (_beantragt_group_ensure_musterstadt_demo_brand($stadt)) {
+    $messages[] = 'Seeded city jurisdiction "Stadt Musterstadt" demo logo.';
+  }
+
+  foreach ([
+    [
+      'label' => 'Bürgerbüro',
+      'slug' => 'citizen-services',
+      'email' => 'service@musterstadt.example.org',
+      'prefix' => 'MS-BB',
+      'jurisdiction_id' => (int) $stadt->id(),
+    ],
+    [
+      'label' => 'Hauptamt',
+      'slug' => 'central-administration',
+      'email' => 'hauptamt@musterstadt.example.org',
+      'prefix' => 'MS-HA',
+      'jurisdiction_id' => (int) $stadt->id(),
+    ],
+    [
+      'label' => 'Personalamt',
+      'slug' => 'personnel-office',
+      'email' => 'personalamt@musterstadt.example.org',
+      'prefix' => 'MS-PA',
+      'jurisdiction_id' => (int) $stadt->id(),
+    ],
+    [
+      'label' => 'Bauamt',
+      'slug' => 'building-department',
+      'email' => 'bauamt@musterstadt.example.org',
+      'prefix' => 'MS-BAU',
+      'jurisdiction_id' => (int) $stadt->id(),
+    ],
+    [
+      'label' => 'Büro des Bürgermeisters',
+      'slug' => 'mayors-office',
+      'email' => 'buergermeister@musterstadt.example.org',
+      'prefix' => 'MS-BM',
+      'jurisdiction_id' => (int) $stadt->id(),
+    ],
+    [
+      'label' => 'Umweltamt',
+      'slug' => 'environment-office',
+      'email' => 'umwelt@musterstadt.example.org',
+      'prefix' => 'MS-UM',
+      'jurisdiction_id' => (int) $stadt->id(),
+    ],
+    [
+      'label' => 'Zentrale Beschaffung',
+      'slug' => 'procurement-office',
+      'email' => 'beschaffung@musterstadt.example.org',
+      'prefix' => 'MS-ZB',
+      'jurisdiction_id' => (int) $stadt->id(),
+    ],
+    // The dog tax is assessed by the Stadtkasse (video "Der Antrag",
+    // Holger 26.10.2026); its catalogue says "Festgesetzt".
+    [
+      'label' => 'Stadtkasse',
+      'slug' => 'stadtkasse',
+      'email' => 'stadtkasse@musterstadt.example.org',
+      'prefix' => 'MS-SK',
+      'jurisdiction_id' => (int) $stadt->id(),
+    ],
+  ] as $org_definition) {
+    $messages = array_merge($messages, _beantragt_group_ensure_demo_org($org_definition));
+  }
+
+  return $messages;
+}
+
+/**
+ * Ensures the fictitious Musterstadt demo has runtime branding.
+ *
+ * The public UI and print view read logos from field_jur_config.theme, not
+ * from frontend-only fallback assets. Keep this idempotent and only fill the
+ * logo when the jurisdiction does not already carry one.
+ */
+function _beantragt_group_ensure_musterstadt_demo_brand(GroupInterface $stadt): bool {
+  return _beantragt_group_ensure_fictitious_demo_brand(
+    $stadt,
+    _beantragt_group_musterstadt_demo_logo_data_url(),
+    'Stadt Musterstadt',
+  );
+}
+
+/**
+ * Adds one SVG demo logo without overwriting configured tenant branding.
+ */
+function _beantragt_group_ensure_fictitious_demo_brand(
+  GroupInterface $jurisdiction,
+  string $logo_data_url,
+  string $logo_alt,
+): bool {
+  if (!$jurisdiction->hasField('field_jur_config')) {
+    return FALSE;
+  }
+
+  $config = [];
+  if (!$jurisdiction->get('field_jur_config')->isEmpty()) {
+    $decoded = json_decode((string) $jurisdiction->get('field_jur_config')->value, TRUE);
+    if (is_array($decoded)) {
+      $config = $decoded;
+    }
+  }
+
+  $theme = isset($config['theme']) && is_array($config['theme']) ? $config['theme'] : [];
+  $current_logo = isset($theme['logoDataUrl']) && is_scalar($theme['logoDataUrl'])
+    ? trim((string) $theme['logoDataUrl'])
+    : '';
+  if ($current_logo !== '') {
+    return FALSE;
+  }
+
+  $theme['logoDataUrl'] = $logo_data_url;
+  if (empty($theme['logoAlt']) || !is_scalar($theme['logoAlt'])) {
+    $theme['logoAlt'] = $logo_alt;
+  }
+  $config['theme'] = $theme;
+
+  $jurisdiction->set('field_jur_config', json_encode($config, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+  $jurisdiction->save();
+
+  return TRUE;
+}
+
+/**
+ * Returns the SVG data URL for the fictitious Musterstadt demo logo.
+ *
+ * The SVG lives in assets/musterstadt-demo-logo.svg, the single source the
+ * case system simulator copies (its drift test compares the bytes).
+ */
+function _beantragt_group_musterstadt_demo_logo_data_url(): string {
+  $svg = file_get_contents(__DIR__ . '/assets/musterstadt-demo-logo.svg');
+  if ($svg === FALSE || $svg === '') {
+    throw new \RuntimeException('The Musterstadt demo logo asset is missing.');
+  }
+
+  return 'data:image/svg+xml;base64,' . base64_encode($svg);
+}
+
+/**
+ * Ensures one demo organisation exists with the expected jurisdiction.
+ *
+ * @param array{label:string,slug:string,email:string,prefix:string,jurisdiction_id:int} $definition
+ *   Demo organisation definition.
+ *
+ * @return string[]
+ *   Messages describing what was done.
+ */
+function _beantragt_group_ensure_demo_org(array $definition): array {
+  $group_storage = \Drupal::entityTypeManager()->getStorage('group');
+  $org = _beantragt_group_find_group_by_slug_or_label('org', $definition['slug'], $definition['label']);
+  // The label fallback adopts legacy demo orgs of the same jurisdiction only:
+  // a "Stadtkasse" of another jurisdiction, imported before the demo seed,
+  // must stay that jurisdiction's.
+  if ($org
+    && (string) ($org->get('field_slug')->value ?? '') !== $definition['slug']
+    && ((int) ($org->get('field_jurisdiction')->target_id ?? 0)) !== $definition['jurisdiction_id']) {
+    $org = NULL;
+  }
+  if (!$org) {
+    $org = $group_storage->create([
+      'type' => 'org',
+      'label' => $definition['label'],
+      'field_jurisdiction' => ['target_id' => $definition['jurisdiction_id']],
+      'field_org_email' => $definition['email'],
+      'field_reference_prefix' => $definition['prefix'],
+      'field_slug' => $definition['slug'],
+    ]);
+    $org->save();
+    return [sprintf('Created organisation "%s" (id=%s).', $definition['label'], $org->id())];
+  }
+
+  $changed = FALSE;
+  $changed = _beantragt_group_set_field_if_changed($org, 'label', $definition['label']) || $changed;
+  $changed = _beantragt_group_set_field_if_changed($org, 'field_slug', $definition['slug']) || $changed;
+  $changed = _beantragt_group_set_field_if_changed($org, 'field_org_email', $definition['email']) || $changed;
+  $changed = _beantragt_group_set_field_if_changed($org, 'field_reference_prefix', $definition['prefix']) || $changed;
+  if ($org->hasField('field_jurisdiction')
+    && ((int) ($org->get('field_jurisdiction')->target_id ?? 0)) !== $definition['jurisdiction_id']) {
+    $org->set('field_jurisdiction', ['target_id' => $definition['jurisdiction_id']]);
+    $changed = TRUE;
+  }
+
+  if ($changed) {
+    $org->save();
+    return [sprintf('Updated organisation "%s".', $definition['label'])];
+  }
+
+  return [];
+}
+
+/**
+ * Finds a demo group by bundle plus slug or legacy label.
+ */
+function _beantragt_group_find_group_by_slug_or_label(string $bundle, string $slug, ?string $legacy_label = NULL): mixed {
+  $groups = \Drupal::entityTypeManager()->getStorage('group')->loadByProperties(['type' => $bundle]);
+  foreach ($groups as $group) {
+    if ($group->hasField('field_slug')
+      && !$group->get('field_slug')->isEmpty()
+      && (string) $group->get('field_slug')->value === $slug) {
+      return $group;
+    }
+  }
+
+  if ($legacy_label !== NULL) {
+    foreach ($groups as $group) {
+      if ((string) $group->label() === $legacy_label) {
+        return $group;
+      }
+    }
+  }
+
+  return NULL;
+}
+
+/**
+ * Sets a scalar field value when it changed.
+ */
+function _beantragt_group_set_field_if_changed(object $entity, string $field_name, string $value): bool {
+  if (!$entity->hasField($field_name)) {
+    return FALSE;
+  }
+
+  if ((string) ($entity->get($field_name)->value ?? '') === $value) {
+    return FALSE;
+  }
+
+  $entity->set($field_name, $value);
+  return TRUE;
+}
+
+/**
+ * Ensures the workspace_inviter role and user scope field exist.
+ *
+ * @return string[]
+ *   Messages describing what was done.
+ */
+function _beantragt_group_ensure_workspace_inviter_scope(): array {
+  $messages = [];
+  $entity_type_manager = \Drupal::entityTypeManager();
+
+  $role_storage = $entity_type_manager->getStorage('user_role');
+  if (!$role_storage->load('workspace_inviter')) {
+    $role_storage->create([
+      'id' => 'workspace_inviter',
+      'label' => 'Workspace inviter',
+      'weight' => 5,
+      'is_admin' => FALSE,
+      'permissions' => [],
+    ])->save();
+    $messages[] = 'Created workspace_inviter role.';
+  }
+
+  $field_storage = $entity_type_manager->getStorage('field_storage_config');
+  if (!$field_storage->load('user.field_scope_jurisdiction')) {
+    $field_storage->create([
+      'field_name' => 'field_scope_jurisdiction',
+      'entity_type' => 'user',
+      'type' => 'entity_reference',
+      'settings' => [
+        'target_type' => 'group',
+      ],
+      'cardinality' => 1,
+      'translatable' => FALSE,
+    ])->save();
+    $messages[] = 'Created field_scope_jurisdiction field storage.';
+  }
+
+  $field_config = $entity_type_manager->getStorage('field_config');
+  if (!$field_config->load('user.user.field_scope_jurisdiction')) {
+    $field_config->create([
+      'field_name' => 'field_scope_jurisdiction',
+      'entity_type' => 'user',
+      'bundle' => 'user',
+      'label' => 'Workspace invite scope',
+      'description' => 'Jurisdiction in which users with the workspace_inviter role may issue workspace invites. Without a scope, only platform administrators may invite.',
+      'required' => FALSE,
+      'settings' => [
+        'handler' => 'default:group',
+        'handler_settings' => [
+          'target_bundles' => [
+            'jur' => 'jur',
+          ],
+          'sort' => [
+            'field' => 'label',
+            'direction' => 'ASC',
+          ],
+          'auto_create' => FALSE,
+        ],
+      ],
+    ])->save();
+    $messages[] = 'Added field_scope_jurisdiction to users.';
+  }
+
+  return $messages ?: ['Workspace inviter scope already exists.'];
+}
+
+/**
+ * Returns the invite token table schema.
+ *
+ * This mirrors the hardened Mark-a-Spot group invitation table and adds the
+ * Beantragt-specific purpose discriminator plus an immutable issuer-scope
+ * snapshot.
+ */
+function _beantragt_group_invitation_schema(): array {
+  return [
+    'description' => 'Stores pending Beantragt workspace and group invitations.',
+    'fields' => [
+      'id' => [
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'Primary key.',
+      ],
+      'token' => [
+        'type' => 'varchar',
+        'length' => 64,
+        'not null' => TRUE,
+        'description' => 'Unique invitation token as hex-encoded random bytes.',
+      ],
+      'purpose' => [
+        'type' => 'varchar',
+        'length' => 32,
+        'not null' => TRUE,
+        'description' => 'Token purpose, for example member_invite or workspace_create.',
+      ],
+      'email' => [
+        'type' => 'varchar',
+        'length' => 254,
+        'not null' => TRUE,
+        'description' => 'Invitee email address.',
+      ],
+      'target_parent_id' => [
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'Jurisdiction group ID that bounds the invite scope.',
+      ],
+      'group_id' => [
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => FALSE,
+        'default' => NULL,
+        'description' => 'Optional target group entity ID for member invitations.',
+      ],
+      'roles' => [
+        'type' => 'text',
+        'not null' => TRUE,
+        'description' => 'JSON array of group role IDs requested by the invitation.',
+      ],
+      'invited_by' => [
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'UID of the user who created the invitation.',
+      ],
+      'issuer_scope_id' => [
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => FALSE,
+        'default' => NULL,
+        'description' => 'Issuer jurisdiction scope snapshot at invite creation time. NULL means global scope.',
+      ],
+      'payload' => [
+        'type' => 'text',
+        'not null' => FALSE,
+        'description' => 'Optional JSON payload for future workspace provisioning metadata.',
+      ],
+      'created' => [
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'Timestamp when the invitation was created.',
+      ],
+      'expires' => [
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => 'Timestamp when the invitation expires.',
+      ],
+      'claimed' => [
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => FALSE,
+        'default' => NULL,
+        'description' => 'Timestamp when the invitation was claimed, NULL if pending.',
+      ],
+    ],
+    'primary key' => ['id'],
+    'unique keys' => [
+      'token' => ['token'],
+    ],
+    'indexes' => [
+      'pending_lookup' => ['email', 'purpose', 'target_parent_id'],
+      'target_parent' => ['target_parent_id'],
+      'issuer_scope' => ['issuer_scope_id'],
+      'expires_claimed' => ['expires', 'claimed'],
+    ],
+  ];
+}
+
+/**
+ * Ensures org groups must carry a jurisdiction reference.
+ *
+ * @return string[]
+ *   Messages describing what was done.
+ */
+function _beantragt_group_ensure_org_jurisdiction_required(): array {
+  $messages = [];
+  $entity_type_manager = \Drupal::entityTypeManager();
+
+  // Scan for violating data before any mutation. If the update aborts here the
+  // field config is left untouched, so a rerun starts from a clean state.
+  $missing_ids = [];
+  $group_storage = $entity_type_manager->getStorage('group');
+  foreach ($group_storage->loadByProperties(['type' => 'org']) as $group) {
+    if ($group->hasField('field_jurisdiction') && $group->get('field_jurisdiction')->isEmpty()) {
+      $missing_ids[] = $group->id();
+    }
+  }
+
+  if ($missing_ids) {
+    throw new UpdateException(sprintf(
+      'Existing org groups must get field_jurisdiction values before this update can complete. Missing group IDs: %s.',
+      implode(', ', $missing_ids),
+    ));
+  }
+
+  $field_config = $entity_type_manager->getStorage('field_config')->load('group.org.field_jurisdiction');
+  if ($field_config && !$field_config->isRequired()) {
+    $field_config->setRequired(TRUE);
+    $field_config->save();
+    $messages[] = 'Marked org.field_jurisdiction as required.';
+  }
+  elseif ($field_config) {
+    $messages[] = 'org.field_jurisdiction is already required.';
+  }
+  else {
+    $messages[] = 'org.field_jurisdiction field config not found.';
+  }
+
+  return $messages;
+}
+
+/**
+ * Ensures module settings exist for services and entity guards.
+ *
+ * @return string[]
+ *   Messages describing what was done.
+ */
+function _beantragt_group_ensure_settings(): array {
+  $config = \Drupal::configFactory()->getEditable('beantragt_group.settings');
+  $changed = FALSE;
+  $messages = [];
+
+  foreach ([
+    'jurisdiction_group_type' => 'jur',
+    'default_jurisdiction_slug' => '',
+    'default_organisation_slug' => 'citizen-services',
+    'frontend_base_url' => '',
+    'workspace_invite_claim_path' => '/workspace/invite',
+    'grantable_roles' => ['jur-member', 'org-member'],
+  ] as $key => $value) {
+    if ($config->get($key) === NULL) {
+      $config->set($key, $value);
+      $changed = TRUE;
+      $messages[] = sprintf('Set beantragt_group.settings:%s.', $key);
+    }
+  }
+
+  if ($changed) {
+    $config->save();
+    return $messages;
+  }
+
+  return ['beantragt_group.settings already exists.'];
+}
+
+/**
+ * Ensures default workspace invite mail config exists.
+ *
+ * The base config object holds neutral English defaults. The German text is a
+ * language config override so non-German locales do not receive German mail.
+ *
+ * @return string[]
+ *   Messages describing what was done.
+ */
+function _beantragt_group_ensure_mail_config(): array {
+  $messages = [];
+  $config = \Drupal::configFactory()->getEditable('beantragt_group.mail');
+
+  if ($config->isNew() || !$config->get('workspace_invitation.subject')) {
+    $config
+      ->set('workspace_invitation.subject', '@site_name: Invitation for @target_parent')
+      ->set('workspace_invitation.body', implode("\n\n", [
+        'Hello,',
+        'You have been invited to set up a workspace under "@target_parent" '
+        . 'on @site_name.',
+        "Open the following link to continue:\n@claim_url",
+        'This invitation is valid for @expires_in days.',
+        'If you did not expect this invitation, you can ignore this email.',
+      ]))
+      ->save();
+    $messages[] = 'Created beantragt_group.mail config.';
+  }
+
+  // Drop the legacy langcode: de from the base object so the English text is
+  // not silently treated as German.
+  if ($config->get('langcode') === 'de') {
+    $config->clear('langcode')->save();
+    $messages[] = 'Removed legacy langcode from beantragt_group.mail.';
+  }
+
+  $language_manager = \Drupal::languageManager();
+  if ($language_manager instanceof ConfigurableLanguageManagerInterface) {
+    $override = $language_manager->getLanguageConfigOverride('de', 'beantragt_group.mail');
+    if ($override->isNew() || !$override->get('workspace_invitation.subject')) {
+      $override
+        ->set('workspace_invitation.subject', '@site_name: Einladung für @target_parent')
+        ->set('workspace_invitation.body', implode("\n\n", [
+          'Guten Tag,',
+          'Sie wurden eingeladen, einen Arbeitsbereich unter "@target_parent" '
+          . 'auf @site_name einzurichten.',
+          "Öffnen Sie dazu folgenden Link:\n@claim_url",
+          'Diese Einladung ist @expires_in Tage gültig.',
+          'Falls Sie diese Einladung nicht erwartet haben, können Sie diese '
+          . 'E-Mail ignorieren.',
+        ]))
+        ->save();
+      $messages[] = 'Created German beantragt_group.mail language override.';
+    }
+  }
+
+  return $messages ?: ['beantragt_group.mail already exists.'];
+}
+
+/**
+ * Ensures scope bypass stays restricted to platform administrators.
+ *
+ * @return bool
+ *   TRUE when at least one relevant role exists.
+ */
+function _beantragt_group_ensure_scope_bypass_permissions(): bool {
+  $changed = FALSE;
+  $role_storage = \Drupal::entityTypeManager()->getStorage('user_role');
+
+  $service_account = $role_storage->load('service_account');
+  if ($service_account) {
+    if ($service_account->hasPermission('bypass beantragt group scope')) {
+      $service_account->revokePermission('bypass beantragt group scope');
+      $service_account->save();
+    }
+    $changed = TRUE;
+  }
+
+  $administrator = $role_storage->load('administrator');
+  if ($administrator) {
+    if (!$administrator->hasPermission('bypass beantragt group scope')) {
+      $administrator->grantPermission('bypass beantragt group scope');
+      $administrator->save();
+    }
+    $changed = TRUE;
+  }
+
+  return $changed;
+}
+
+/**
+ * Backward-compatible wrapper for already-deployed update hooks.
+ *
+ * @return bool
+ *   TRUE when at least one relevant role exists.
+ */
+function _beantragt_group_grant_scope_bypass_to_service_account(): bool {
+  return _beantragt_group_ensure_scope_bypass_permissions();
+}
+
+/**
+ * Converts a string to a URL-safe slug.
+ *
+ * @param string $text
+ *   The input text.
+ *
+ * @return string
+ *   The slugified text.
+ */
+function _beantragt_group_slugify(string $text): string {
+  // Transliterate German characters.
+  $replacements = [
+    'ä' => 'ae',
+    'ö' => 'oe',
+    'ü' => 'ue',
+    'ß' => 'ss',
+    'Ä' => 'ae',
+    'Ö' => 'oe',
+    'Ü' => 'ue',
+  ];
+  $text = strtr($text, $replacements);
+  $text = mb_strtolower($text);
+  $text = preg_replace('/[^a-z0-9]+/', '-', $text);
+  return trim($text, '-');
+}
+
+/**
+ * Installs scope base field storages on available scoped entity types.
+ *
+ * @return string[]
+ *   Messages describing installed fields.
+ */
+function _beantragt_group_install_scope_field_storages(): array {
+  $messages = [];
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  $entity_type_manager = \Drupal::entityTypeManager();
+  $entity_types = ['form_schema', 'form_schema_group', 'application', 'applicant'];
+  $field_names = ['field_jurisdiction', 'field_organisation', 'field_group'];
+
+  foreach ($entity_types as $entity_type_id) {
+    if (!$entity_type_manager->hasDefinition($entity_type_id)) {
+      continue;
+    }
+
+    $entity_type = $entity_type_manager->getDefinition($entity_type_id);
+    $field_definitions = beantragt_group_entity_base_field_info($entity_type);
+
+    foreach ($field_names as $field_name) {
+      if (!isset($field_definitions[$field_name])) {
+        continue;
+      }
+
+      $field_definitions[$field_name]->setName($field_name);
+      $field_definitions[$field_name]->setTargetEntityTypeId($entity_type_id);
+      if (!$update_manager->getFieldStorageDefinition($field_name, $entity_type_id)) {
+        $update_manager->installFieldStorageDefinition(
+          $field_name,
+          $entity_type_id,
+          'beantragt_group',
+          $field_definitions[$field_name]
+        );
+        $messages[] = "Installed $field_name base field on $entity_type_id.";
+      }
+    }
+  }
+
+  return $messages;
+}
+
+/**
+ * Adds config-as-content fields (jur config JSON, legal notice, privacy).
+ */
+function beantragt_group_update_10020(): string {
+  return implode(' ', _beantragt_group_ensure_config_content_fields(\Drupal::entityTypeManager()));
+}
+
+/**
+ * Ensures the config-as-content fields exist on jur groups.
+ *
+ * Creates field_jur_config (string_long JSON blob — string_long, NOT
+ * text_long, because text processing corrupts JSON), field_legal_notice and
+ * field_privacy_policy (text_long HTML content) on the jur group type.
+ * Fresh installs get these via config/install; this covers existing sites
+ * through update_10020.
+ *
+ * @param \Drupal\Core\Entity\EntityTypeManagerInterface $entity_type_manager
+ *   The entity type manager.
+ *
+ * @return string[]
+ *   Messages describing what was done.
+ */
+function _beantragt_group_ensure_config_content_fields($entity_type_manager): array {
+  $messages = [];
+
+  $storage_definitions = [
+    'field_jur_config' => [
+      'type' => 'string_long',
+      'settings' => [],
+    ],
+    'field_legal_notice' => [
+      'type' => 'text_long',
+      'settings' => [],
+    ],
+    'field_privacy_policy' => [
+      'type' => 'text_long',
+      'settings' => [],
+    ],
+  ];
+
+  $field_definitions = [
+    'field_jur_config' => [
+      'label' => 'Jurisdiction Configuration (JSON)',
+      'description' => 'Complete jurisdiction configuration as JSON. Invalid or unsupported values are rejected. Prefer the Settings UI for validated, conflict-safe production changes.',
+    ],
+    'field_legal_notice' => [
+      'label' => 'Impressum',
+      'description' => 'Impressum / rechtliche Hinweise dieser Jurisdiktion (HTML erlaubt).',
+    ],
+    'field_privacy_policy' => [
+      'label' => 'Datenschutzerklaerung',
+      'description' => 'Datenschutzerklaerung dieser Jurisdiktion (HTML erlaubt).',
+    ],
+  ];
+
+  $field_storage_config = $entity_type_manager->getStorage('field_storage_config');
+  $field_config = $entity_type_manager->getStorage('field_config');
+
+  foreach ($storage_definitions as $field_name => $definition) {
+    if (!$field_storage_config->load('group.' . $field_name)) {
+      $field_storage_config->create([
+        'field_name' => $field_name,
+        'entity_type' => 'group',
+        'type' => $definition['type'],
+        'settings' => $definition['settings'],
+        'cardinality' => 1,
+        'translatable' => FALSE,
+      ])->save();
+      $messages[] = "Created $field_name field storage.";
+    }
+
+    if (!$field_config->load('group.jur.' . $field_name)) {
+      $field_config->create([
+        'field_name' => $field_name,
+        'entity_type' => 'group',
+        'bundle' => 'jur',
+        'label' => $field_definitions[$field_name]['label'],
+        'description' => $field_definitions[$field_name]['description'],
+        'required' => FALSE,
+        'translatable' => FALSE,
+      ])->save();
+      $messages[] = "Added $field_name to jur group type.";
+    }
+  }
+
+  return $messages === [] ? ['Config-as-content fields already exist.'] : $messages;
+}
+
+/**
+ * Updates German labels and descriptions for the organisation group type.
+ */
+function beantragt_group_update_10030(): void {
+  $changes = [
+    'group.type.org' => [
+      'label' => ['Organisation', 'Dienststelle'],
+      'description' => [
+        'Organisationseinheit (Abteilung/Amt) innerhalb einer Jurisdiktion.',
+        'Dienststelle einer Stadt oder Gemeinde.',
+      ],
+    ],
+    'field.field.group.org.field_jurisdiction' => [
+      'description' => [
+        'Die Jurisdiktion (Stadt/Gemeinde) zu der diese Organisation gehoert.',
+        'Stadt oder Gemeinde, zu der diese Dienststelle gehört.',
+      ],
+    ],
+    'field.field.group.org.field_org_email' => [
+      'description' => [
+        'Kontakt-E-Mail-Adresse fuer diese Organisation.',
+        'Kontakt-E-Mail-Adresse dieser Dienststelle.',
+      ],
+    ],
+    'field.field.group.org.field_parent_org' => [
+      'label' => ['Uebergeordnete Organisation', 'Übergeordnete Dienststelle'],
+      'description' => [
+        'Optionale uebergeordnete Organisationseinheit fuer importierte Amts-, Abteilungs- oder Teamhierarchien.',
+        'Optionale übergeordnete Dienststelle für importierte Amts-, Abteilungs- oder Teamhierarchien.',
+      ],
+    ],
+    'field.field.group.org.field_directory_provider' => [
+      'description' => [
+        'Optionaler Quelltyp fuer extern verwaltete Organisationen, z.B. active_directory oder entra_id. Leer bedeutet lokal verwaltet.',
+        'Optionaler Quelltyp für extern verwaltete Dienststellen, z. B. active_directory oder entra_id. Leer bedeutet lokal verwaltet.',
+      ],
+    ],
+  ];
+
+  foreach ($changes as $name => $fields) {
+    $config = \Drupal::configFactory()->getEditable($name);
+    $changed = FALSE;
+    foreach ($fields as $key => [$old, $new]) {
+      if ($config->get($key) === $old) {
+        $config->set($key, $new);
+        $changed = TRUE;
+      }
+    }
+    if ($changed) {
+      $config->save();
+    }
+  }
+}
+
+/**
+ * Removes organisation edit access from ordinary group members.
+ */
+function beantragt_group_update_10031(): void {
+  $role = \Drupal::configFactory()->getEditable('group.role.org-member');
+  $permissions = $role->get('permissions');
+  if (is_array($permissions) && in_array('edit group', $permissions, TRUE)) {
+    $role->set('permissions', array_values(array_diff($permissions, ['edit group'])))->save();
+  }
+}
+
+/**
+ * Adds the optional retention period to organisation groups.
+ */
+function beantragt_group_update_10032(): string {
+  $path = \Drupal::service('extension.list.module')->getPath('beantragt_group');
+  $source = new FileStorage(DRUPAL_ROOT . '/' . $path . '/config/install');
+  foreach ([
+    'field_storage_config' => 'field.storage.group.field_retention_days',
+    'field_config' => 'field.field.group.org.field_retention_days',
+  ] as $type => $name) {
+    $storage = \Drupal::entityTypeManager()->getStorage($type);
+    $values = $source->read($name);
+    if ($values === FALSE) {
+      throw new UpdateException('The organisation retention field configuration is missing.');
+    }
+    if (!$storage->load($values['id'])) {
+      $storage->create($values)->save();
+    }
+  }
+  _beantragt_group_ensure_admin_form_displays();
+
+  return 'Installed the optional organisation retention period.';
+}

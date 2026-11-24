@@ -1,0 +1,275 @@
+<?php
+
+/**
+ * @file
+ * Beantragt Workflow module.
+ *
+ * Provides workflow status transition validation, auto-routing of
+ * new applications to assignees, and escalation checking via cron.
+ */
+
+declare(strict_types=1);
+
+use Drupal\beantragt_application\RevisionLog;
+use Drupal\beantragt_application\Entity\ApplicationInterface;
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\EntityTypeInterface;
+use Drupal\Core\Field\BaseFieldDefinition;
+
+/**
+ * Implements hook_entity_base_field_info().
+ *
+ * Adds assignment base fields on application entities.
+ */
+function beantragt_workflow_entity_base_field_info(EntityTypeInterface $entity_type): array {
+  $fields = [];
+
+  if ($entity_type->id() === 'application') {
+    $fields['field_assigned_to'] = BaseFieldDefinition::create('entity_reference')
+      ->setLabel(t('Assigned To'))
+      ->setDescription(t('The Sachbearbeiter (case worker) this application is assigned to.'))
+      ->setSetting('target_type', 'user')
+      ->setSetting('handler', 'default')
+      ->setCardinality(1)
+      ->setRevisionable(TRUE)
+      ->setTranslatable(FALSE)
+      ->setDisplayOptions('form', [
+        'type' => 'entity_reference_autocomplete',
+        'weight' => 5,
+        'settings' => [
+          'match_operator' => 'CONTAINS',
+          'size' => '60',
+          'placeholder' => '',
+        ],
+      ])
+      ->setDisplayConfigurable('form', TRUE)
+      ->setDisplayOptions('view', [
+        'label' => 'inline',
+        'type' => 'entity_reference_label',
+        'weight' => 5,
+      ])
+      ->setDisplayConfigurable('view', TRUE);
+
+    $fields['field_assigned_team'] = BaseFieldDefinition::create('entity_reference')
+      ->setLabel(t('Assigned Team'))
+      ->setDescription(t('The organisation or team currently responsible for this application.'))
+      ->setSetting('target_type', 'group')
+      ->setSetting('handler', 'default:group')
+      ->setSetting('handler_settings', [
+        'target_bundles' => [
+          'org' => 'org',
+        ],
+        'sort' => [
+          'field' => 'label',
+          'direction' => 'ASC',
+        ],
+        'auto_create' => FALSE,
+      ])
+      ->setCardinality(1)
+      ->setRevisionable(TRUE)
+      ->setTranslatable(FALSE)
+      ->setDisplayOptions('form', [
+        'type' => 'entity_reference_autocomplete',
+        'weight' => 6,
+        'settings' => [
+          'match_operator' => 'CONTAINS',
+          'size' => '60',
+          'placeholder' => '',
+        ],
+      ])
+      ->setDisplayConfigurable('form', TRUE)
+      ->setDisplayOptions('view', [
+        'label' => 'inline',
+        'type' => 'entity_reference_label',
+        'weight' => 6,
+      ])
+      ->setDisplayConfigurable('view', TRUE);
+  }
+
+  return $fields;
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_presave() for application.
+ *
+ * Validates workflow status transitions and auto-routes new applications.
+ */
+function beantragt_workflow_application_presave(EntityInterface $entity): void {
+  if (!$entity instanceof ApplicationInterface) {
+    return;
+  }
+
+  /** @var \Drupal\beantragt_workflow\Service\WorkflowManager $workflowManager */
+  $workflowManager = \Drupal::service('beantragt_workflow.workflow_manager');
+  $workflowManager->validateTransition($entity);
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_update() for application.
+ *
+ * Dispatches the WorkflowTransitionEvent after the save has been committed,
+ * so subscribers (notification mails, ECA) never act on a save that fails.
+ */
+function beantragt_workflow_application_update(EntityInterface $entity): void {
+  if (!$entity instanceof ApplicationInterface) {
+    return;
+  }
+
+  /** @var \Drupal\beantragt_workflow\Service\WorkflowManager $workflowManager */
+  $workflowManager = \Drupal::service('beantragt_workflow.workflow_manager');
+  $workflowManager->dispatchTransition($entity);
+  // Dispatch is synchronous: subscribers have read the automatic reason, so
+  // a later save of the same object starts without it.
+  $entity->clearSystemStatusChange();
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_insert() for application.
+ *
+ * Routes newly created applications to the appropriate assignee based
+ * on the application's group membership.
+ */
+function beantragt_workflow_application_insert(EntityInterface $entity): void {
+  // Static flag prevents recursion: the save() below triggers update hooks
+  // (not insert again), but the static guard is a safety net.
+  static $routingInProgress = FALSE;
+
+  if (!$entity instanceof ApplicationInterface) {
+    return;
+  }
+  if (!$entity->isEmailConfirmed()) {
+    return;
+  }
+
+  if ($entity->hasField('field_origin') && $entity->get('field_origin')->value === 'bulk') {
+    return;
+  }
+
+  if ($routingInProgress) {
+    return;
+  }
+
+  // Only route if the entity has the field_assigned_to field and it is empty.
+  if (!$entity->hasField('field_assigned_to')) {
+    return;
+  }
+
+  /** @var \Drupal\beantragt_workflow\Service\ApplicationRouter $router */
+  $router = \Drupal::service('beantragt_workflow.application_router');
+  $router->route($entity);
+
+  // Persist the assignment if the router assigned someone.
+  if (!$entity->get('field_assigned_to')->isEmpty()) {
+    $routingInProgress = TRUE;
+    try {
+      _beantragt_workflow_prepare_routing_revision($entity);
+      $entity->save();
+    }
+    finally {
+      $routingInProgress = FALSE;
+    }
+  }
+}
+
+/**
+ * Routes applications after double opt-in confirmation.
+ */
+function beantragt_workflow_beantragt_application_confirmed(ApplicationInterface $application): void {
+  if (!$application->hasField('field_assigned_to') || !$application->get('field_assigned_to')->isEmpty()) {
+    return;
+  }
+
+  /** @var \Drupal\beantragt_workflow\Service\ApplicationRouter $router */
+  $router = \Drupal::service('beantragt_workflow.application_router');
+  $router->route($application);
+
+  if (!$application->get('field_assigned_to')->isEmpty()) {
+    _beantragt_workflow_prepare_routing_revision($application);
+    $application->save();
+  }
+}
+
+/**
+ * Records automatic routing as a separate system-authored revision.
+ */
+function _beantragt_workflow_prepare_routing_revision(ApplicationInterface $application): void {
+  $application->setNewRevision(TRUE);
+  $application->setRevisionUserId(0);
+  $application->setRevisionCreationTime(\Drupal::time()->getRequestTime());
+  RevisionLog::setEvent($application, 'assignment_sync');
+}
+
+/**
+ * Implements hook_cron().
+ *
+ * Checks for applications that should be escalated based on the
+ * configured escalation period. Logs escalation-worthy applications.
+ * Future: integrate with notification system.
+ */
+function beantragt_workflow_cron(): void {
+  /** @var \Drupal\beantragt_workflow\Service\WorkflowManager $workflowManager */
+  $workflowManager = \Drupal::service('beantragt_workflow.workflow_manager');
+
+  $escalationDays = $workflowManager->getEscalationDays();
+  if ($escalationDays <= 0) {
+    return;
+  }
+
+  $currentTime = \Drupal::time()->getRequestTime();
+  $cutoff = $currentTime - ($escalationDays * 86400);
+  $logger = \Drupal::logger('beantragt_workflow');
+
+  $entityTypeManager = \Drupal::entityTypeManager();
+
+  // Resolve the ids of all non-terminal workflow statuses. Applications
+  // referencing one of these are escalation candidates.
+  $statusStorage = $entityTypeManager->getStorage('workflow_status');
+  $nonTerminalIds = $statusStorage->getQuery()
+    ->accessCheck(FALSE)
+    ->condition('field_is_terminal', FALSE)
+    ->execute();
+
+  if (empty($nonTerminalIds)) {
+    return;
+  }
+
+  // Query applications in non-terminal statuses that haven't been
+  // updated within the escalation window.
+  $storage = $entityTypeManager->getStorage('application');
+  $ids = $storage->getQuery()
+    ->accessCheck(FALSE)
+    ->condition('field_email_confirmed', TRUE)
+    ->condition('field_workflow_status', array_values($nonTerminalIds), 'IN')
+    ->condition('changed', $cutoff, '<')
+    ->range(0, 100)
+    ->execute();
+
+  if (empty($ids)) {
+    return;
+  }
+
+  $applications = $storage->loadMultiple($ids);
+  $escalatedCount = 0;
+
+  foreach ($applications as $application) {
+    if (!$application instanceof ApplicationInterface) {
+      continue;
+    }
+    if ($workflowManager->shouldEscalate($application, $currentTime)) {
+      $escalatedCount++;
+      $status = $workflowManager->resolveStatusEntity($application);
+      $logger->warning('Application @id (ref: @ref) needs escalation. Status "@status" unchanged for over @days days.', [
+        '@id' => $application->id(),
+        '@ref' => $application->getReferenceNumber() ?? 'N/A',
+        '@status' => $status !== NULL ? $status->getMachineName() : 'unknown',
+        '@days' => $escalationDays,
+      ]);
+    }
+  }
+
+  if ($escalatedCount > 0) {
+    $logger->info('Escalation check: @count applications flagged for escalation.', [
+      '@count' => $escalatedCount,
+    ]);
+  }
+}

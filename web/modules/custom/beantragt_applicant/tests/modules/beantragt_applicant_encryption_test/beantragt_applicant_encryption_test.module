@@ -1,0 +1,27 @@
+<?php
+
+/**
+ * @file
+ * Controlled Field Encrypt hook behavior for applicant kernel tests.
+ */
+
+declare(strict_types=1);
+
+use Drupal\Core\Entity\ContentEntityInterface;
+
+/**
+ * Implements hook_field_encrypt_allow_encryption().
+ */
+function beantragt_applicant_encryption_test_field_encrypt_allow_encryption(ContentEntityInterface $entity): bool {
+  if ($entity->getEntityTypeId() !== 'applicant') {
+    return TRUE;
+  }
+
+  if (\Drupal::state()->get('beantragt_applicant_encryption_test.deny_second', FALSE)) {
+    $calls = (int) \Drupal::state()->get('beantragt_applicant_encryption_test.calls', 0);
+    \Drupal::state()->set('beantragt_applicant_encryption_test.calls', $calls + 1);
+    return $calls !== 1;
+  }
+
+  return !\Drupal::state()->get('beantragt_applicant_encryption_test.deny', FALSE);
+}

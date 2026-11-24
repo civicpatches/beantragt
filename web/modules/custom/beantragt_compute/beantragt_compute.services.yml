@@ -1,0 +1,14 @@
+services:
+  plugin.manager.beantragt_compute_function:
+    class: Drupal\beantragt_compute\ComputeFunctionManager
+    parent: default_plugin_manager
+    arguments:
+      - '@container.namespaces'
+      - '@cache.discovery'
+      - '@module_handler'
+
+  beantragt_compute.evaluator:
+    class: Drupal\beantragt_compute\ComputedFieldEvaluator
+    arguments:
+      - '@plugin.manager.beantragt_compute_function'
+      - '@logger.factory'

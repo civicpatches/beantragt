@@ -1,0 +1,23 @@
+beantragt_notification.templates.list:
+  path: '/api/notification/templates'
+  defaults:
+    _controller: '\Drupal\beantragt_notification\Controller\NotificationSettingsController::listTemplates'
+    _format: json
+  requirements:
+    _permission: 'administer beantragt notification templates'
+  options:
+    _auth: ['basic_auth', 'cookie']
+  methods: [GET]
+
+beantragt_notification.templates.update:
+  path: '/api/notification/templates/{template_id}'
+  defaults:
+    _controller: '\Drupal\beantragt_notification\Controller\NotificationSettingsController::updateTemplate'
+    _format: json
+  requirements:
+    _permission: 'administer beantragt notification templates'
+    _csrf_request_header_token: 'TRUE'
+    template_id: '[a-z_]+'
+  options:
+    _auth: ['basic_auth', 'cookie']
+  methods: [PUT]

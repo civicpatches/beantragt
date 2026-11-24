@@ -1,0 +1,111 @@
+{
+  "id": {
+    "ui:options": {
+      "placeholder": "z. B. demo_baumschutz_negativerklaerung",
+      "description": "Stabile Maschinen-ID (Kleinbuchstaben, Unterstriche). Wird nicht in der UI angezeigt."
+    }
+  },
+  "title": {
+    "ui:options": {
+      "placeholder": "z. B. Negativerklärung zum Baumschutz"
+    }
+  },
+  "description": {
+    "ui:options": {
+      "widget": "textarea",
+      "description": "Beschreibung des Formulars für die Bürgerseite."
+    }
+  },
+  "version": {
+    "ui:options": {
+      "description": "Wird beim Speichern automatisch hochgezählt, wenn sich field_schema ändert."
+    }
+  },
+  "sections": {
+    "ui:options": {
+      "title": "Abschnitte",
+      "description": "Gliedert das Formular in logische Bereiche (Antragsteller, Anliegen, …)."
+    },
+    "items": {
+      "id": {
+        "ui:options": {
+          "placeholder": "z. B. person",
+          "description": "Maschinen-ID des Abschnitts."
+        }
+      },
+      "title": {
+        "ui:options": {
+          "placeholder": "z. B. Antragsteller"
+        }
+      },
+      "description": {
+        "ui:options": {
+          "widget": "textarea"
+        }
+      },
+      "fields": {
+        "ui:options": {
+          "title": "Felder",
+          "description": "Eingabefelder dieses Abschnitts."
+        },
+        "items": {
+          "id": {
+            "ui:options": {
+              "placeholder": "z. B. full_name"
+            }
+          },
+          "type": {
+            "ui:options": {
+              "description": "text = einzeilig, textarea = mehrzeilig, select = Dropdown, radio = Auswahl, checkbox = Häkchen, file = Datei, date/email/tel/number = spezielle Eingaben."
+            }
+          },
+          "label": {
+            "ui:options": {
+              "placeholder": "z. B. Vollständiger Name"
+            }
+          },
+          "placeholder": {
+            "ui:options": {
+              "placeholder": "Wird im leeren Eingabefeld angezeigt."
+            }
+          },
+          "crm_key": {
+            "ui:options": {
+              "placeholder": "z. B. person.email",
+              "description": "Optional. Übernimmt den Wert in das Applicant-CRM."
+            }
+          },
+          "format": {
+            "ui:options": {
+              "placeholder": "z. B. postal_code"
+            }
+          },
+          "validation": {
+            "ui:options": {
+              "title": "Validierung",
+              "description": "Muster und Längenbeschränkungen."
+            }
+          },
+          "options": {
+            "ui:options": {
+              "title": "Optionen",
+              "description": "Nur für select und radio. Eine Option pro Zeile."
+            }
+          }
+        }
+      }
+    }
+  },
+  "semantics": {
+    "ui:options": {
+      "title": "Semantik",
+      "description": "Klassifikation des Formulars (FIM/XÖV-nah)."
+    }
+  },
+  "source": {
+    "ui:options": {
+      "title": "Quelle",
+      "description": "Herkunft des Formulars (Referenz, Seed-Datei, externe URL)."
+    }
+  }
+}

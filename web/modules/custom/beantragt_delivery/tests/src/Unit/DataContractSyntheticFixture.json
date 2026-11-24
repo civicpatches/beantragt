@@ -1,0 +1,65 @@
+{
+  "GSynthetic069": {
+    "FSynthetic068": "SYNTHETIC TEST",
+    "GSynthetic093": {},
+    "GSynthetic084": {},
+    "GSynthetic086": {
+      "FSynthetic051": "SYNTHETIC TEST"
+    }
+  },
+  "GSynthetic078": [
+    {
+      "GSynthetic070": {
+        "FSynthetic051": "SYNTHETIC TEST",
+        "GSynthetic090": {
+          "FSynthetic056": 1850
+        },
+        "GSynthetic094": {
+          "FSynthetic066": "001"
+        },
+        "FSynthetic003": "001",
+        "FSynthetic010": [],
+        "FSynthetic011": []
+      },
+      "GSynthetic071": {
+        "FSynthetic004": "001",
+        "GSynthetic072": {
+          "FSynthetic017": "001",
+          "FSynthetic018": "2026-09-18"
+        },
+        "GSynthetic079": []
+      },
+      "GSynthetic073": {
+        "FSynthetic005": false,
+        "FSynthetic007": false,
+        "FSynthetic043": "SYNTHETIC TEST"
+      },
+      "GSynthetic075": {
+        "GSynthetic076": {
+          "FSynthetic026": "001",
+          "FSynthetic001": "SYNTHETIC TEST",
+          "FSynthetic027": "SYNTHETIC TEST"
+        },
+        "FSynthetic028": "001",
+        "FSynthetic030": [
+          "SYNTHETIC TEST"
+        ],
+        "FSynthetic040": []
+      },
+      "GSynthetic074": {
+        "FSynthetic023": "SYNTHETIC TEST",
+        "FSynthetic024": "SYNTHETIC TEST",
+        "FSynthetic025": "SYNTHETIC TEST",
+        "FSynthetic035": [
+          "SYNTHETIC TEST"
+        ],
+        "FSynthetic039": [
+          "SYNTHETIC TEST"
+        ],
+        "FSynthetic041": [
+          "SYNTHETIC TEST"
+        ]
+      }
+    }
+  ]
+}

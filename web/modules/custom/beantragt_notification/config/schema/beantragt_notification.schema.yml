@@ -1,0 +1,108 @@
+beantragt_notification.settings:
+  type: config_object
+  label: 'Beantragt Notification settings'
+  mapping:
+    enabled_templates:
+      type: mapping
+      label: 'Enabled templates'
+      mapping:
+        external_response_available:
+          type: boolean
+          label: 'External response available enabled'
+        application_confirmation_request:
+          type: boolean
+          label: 'Application confirmation request enabled'
+        application_confirmation:
+          type: boolean
+          label: 'Application confirmation enabled'
+        status_change:
+          type: boolean
+          label: 'Status change enabled'
+        approval:
+          type: boolean
+          label: 'Approval enabled'
+        rejection:
+          type: boolean
+          label: 'Rejection enabled'
+        new_application_alert:
+          type: boolean
+          label: 'New application alert enabled'
+        assignment_alert:
+          type: boolean
+          label: 'Assignment alert enabled'
+        delegation_alert:
+          type: boolean
+          label: 'Delegation alert enabled'
+        escalation_alert:
+          type: boolean
+          label: 'Escalation alert enabled'
+        deadline_alert:
+          type: boolean
+          label: 'Deadline alert enabled'
+        resubmission_reminder:
+          type: boolean
+          label: 'Resubmission reminder enabled'
+        application_comment_staff:
+          type: boolean
+          label: 'Staff comment notification enabled'
+        application_comment_citizen:
+          type: boolean
+          label: 'Citizen comment notification enabled'
+
+beantragt_notification.mail:
+  type: config_object
+  label: 'Beantragt Notification mail templates'
+  mapping:
+    external_response_available:
+      type: beantragt_notification.mail_template
+      label: 'External response available'
+    application_confirmation_request:
+      type: beantragt_notification.mail_template
+      label: 'Application confirmation request'
+    application_confirmation:
+      type: beantragt_notification.mail_template
+      label: 'Application confirmation'
+    status_change:
+      type: beantragt_notification.mail_template
+      label: 'Status change'
+    approval:
+      type: beantragt_notification.mail_template
+      label: 'Approval'
+    rejection:
+      type: beantragt_notification.mail_template
+      label: 'Rejection'
+    new_application_alert:
+      type: beantragt_notification.mail_template
+      label: 'New application alert'
+    assignment_alert:
+      type: beantragt_notification.mail_template
+      label: 'Assignment alert'
+    delegation_alert:
+      type: beantragt_notification.mail_template
+      label: 'Delegation alert'
+    escalation_alert:
+      type: beantragt_notification.mail_template
+      label: 'Escalation alert'
+    deadline_alert:
+      type: beantragt_notification.mail_template
+      label: 'Deadline alert'
+    resubmission_reminder:
+      type: beantragt_notification.mail_template
+      label: 'Resubmission reminder'
+    application_comment_staff:
+      type: beantragt_notification.mail_template
+      label: 'Staff comment notification to citizen'
+    application_comment_citizen:
+      type: beantragt_notification.mail_template
+      label: 'Citizen comment notification to staff'
+
+beantragt_notification.mail_template:
+  type: mapping
+  label: 'Mail template'
+  mapping:
+    subject:
+      type: string
+      label: 'Subject'
+    body:
+      type: string
+      label: 'Body'

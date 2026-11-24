@@ -1,0 +1,44 @@
+<?php
+
+/**
+ * @file
+ * Hooks of beantragt_nachreichung: deletion with the application and cron.
+ */
+
+declare(strict_types=1);
+
+use Drupal\beantragt_application\Entity\ApplicationInterface;
+use Drupal\Core\Entity\EntityInterface;
+
+/**
+ * Implements hook_ENTITY_TYPE_predelete() for application.
+ *
+ * Identifiers, request records and events go with the application.
+ */
+function beantragt_nachreichung_application_predelete(EntityInterface $entity): void {
+  if ($entity instanceof ApplicationInterface) {
+    \Drupal::service('beantragt_nachreichung.cleanup')->forApplication((int) $entity->id());
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_update() for application.
+ *
+ * Anonymization by the retention run removes them as well.
+ */
+function beantragt_nachreichung_application_update(EntityInterface $entity): void {
+  if ($entity instanceof ApplicationInterface
+    && (json_decode($entity->getData() ?? '', TRUE)['_anonymized'] ?? NULL) === TRUE) {
+    \Drupal::service('beantragt_nachreichung.cleanup')->forApplication((int) $entity->id());
+  }
+}
+
+/**
+ * Implements hook_cron().
+ *
+ * Activates rows of released request letters left in draft, removes draft
+ * rows of discarded letters after a day and purges events after 365 days.
+ */
+function beantragt_nachreichung_cron(): void {
+  \Drupal::service('beantragt_nachreichung.activation')->cron();
+}

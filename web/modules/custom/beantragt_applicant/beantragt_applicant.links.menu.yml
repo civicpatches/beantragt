@@ -1,0 +1,5 @@
+entity.applicant.collection:
+  title: 'Applicants'
+  route_name: entity.applicant.collection
+  parent: system.admin_content
+  weight: 30

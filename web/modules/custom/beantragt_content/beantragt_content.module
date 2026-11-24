@@ -1,0 +1,54 @@
+<?php
+
+/**
+ * @file
+ * Hook implementations for the beantragt content module.
+ */
+
+declare(strict_types=1);
+
+use Drupal\Core\Access\AccessResult;
+use Drupal\Core\Access\AccessResultInterface;
+use Drupal\Core\Entity\EntityTypeInterface;
+use Drupal\Core\Session\AccountInterface;
+use Drupal\file\FileInterface;
+
+/**
+ * Implements hook_entity_type_alter().
+ */
+function beantragt_content_entity_type_alter(array &$entity_types): void {
+  if (!isset($entity_types['node']) || !$entity_types['node'] instanceof EntityTypeInterface) {
+    return;
+  }
+
+  $entity_types['node']->addConstraint('PublicPageSlug');
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_access() for file entities.
+ *
+ * Core grants owners access to their temporary files only. Public-document
+ * PDFs live on the private scheme and are made permanent right after the
+ * upload, while the referencing document node is still unpublished. The next
+ * save of that node then fails entity validation ("You do not have access to
+ * the referenced entity") because no viewable entity references the file yet.
+ *
+ * The grant is deliberately narrow: view only (what the reference validation
+ * checks) and only for public-document uploads. A download grant or a wider
+ * URI scope would keep application attachments reachable for their uploader
+ * through /system/files even after redaction or case handover.
+ */
+function beantragt_content_file_access(FileInterface $file, string $operation, AccountInterface $account): AccessResultInterface {
+  if ($operation !== 'view') {
+    return AccessResult::neutral();
+  }
+  if (!str_starts_with((string) $file->getFileUri(), 'private://public_documents/')) {
+    return AccessResult::neutral();
+  }
+  if ($account->isAuthenticated() && (int) $file->getOwnerId() === (int) $account->id()) {
+    return AccessResult::allowed()
+      ->cachePerUser()
+      ->addCacheableDependency($file);
+  }
+  return AccessResult::neutral();
+}

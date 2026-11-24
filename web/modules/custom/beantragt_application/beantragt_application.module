@@ -1,0 +1,950 @@
+<?php
+
+/**
+ * @file
+ * Primary module hooks for beantragt_application module.
+ */
+
+declare(strict_types=1);
+
+use Drupal\beantragt_application\Access\ApplicationCaseScope;
+use Drupal\beantragt_application\Access\ApplicationMembershipBatch;
+use Drupal\beantragt_application\Hook\RevisionHooks;
+use Drupal\file\FileInterface;
+use Drupal\beantragt_application\Entity\ApplicationAttachmentInterface;
+use Drupal\beantragt_application\Entity\ApplicationInterface;
+use Drupal\beantragt_application\Exception\ApplicationDeletionLockedException;
+use Drupal\beantragt_application\Plugin\Field\FormSchemaProfileConsentItemList;
+use Drupal\beantragt_application\ProfileConsentScope;
+use Drupal\beantragt_application\RevisionLog;
+use Drupal\beantragt_application\ApplicationAssignmentPolicy;
+use Drupal\Core\Access\AccessResult;
+use Drupal\Core\Access\AccessResultInterface;
+use Drupal\Core\Database\Query\SelectInterface;
+use Drupal\Core\Entity\ContentEntityInterface;
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\EntityStorageException;
+use Drupal\Core\Entity\EntityTypeInterface;
+use Drupal\Core\Entity\FieldableEntityInterface;
+use Drupal\Core\Field\BaseFieldDefinition;
+use Drupal\Core\Field\FieldDefinitionInterface;
+use Drupal\Core\Field\FieldItemListInterface;
+use Drupal\Core\Session\AccountInterface;
+use Drupal\group\Entity\GroupRelationshipInterface;
+
+/**
+ * Implements hook_query_TAG_alter() for staff message candidates.
+ */
+function beantragt_application_query_beantragt_application_message_candidates_alter(SelectInterface $query): void {
+  $candidates = $query->getMetaData('beantragt_application_message_candidates');
+  // Another query carrying the tag without candidates is left unchanged.
+  if ($candidates instanceof SelectInterface) {
+    $query->condition('base_table.id', $candidates, 'IN');
+  }
+}
+
+/**
+ * Implements hook_group_relationship_insert().
+ */
+function beantragt_application_group_relationship_insert(GroupRelationshipInterface $relationship): void {
+  _beantragt_application_reset_membership_access($relationship);
+}
+
+/**
+ * Implements hook_group_relationship_update().
+ */
+function beantragt_application_group_relationship_update(GroupRelationshipInterface $relationship): void {
+  _beantragt_application_reset_membership_access($relationship);
+}
+
+/**
+ * Implements hook_group_relationship_delete().
+ */
+function beantragt_application_group_relationship_delete(GroupRelationshipInterface $relationship): void {
+  _beantragt_application_reset_membership_access($relationship);
+}
+
+/**
+ * Clears process-local decisions after membership changes.
+ */
+function _beantragt_application_reset_membership_access(GroupRelationshipInterface $relationship): void {
+  if ($relationship->getPluginId() === 'group_membership') {
+    ApplicationMembershipBatch::invalidate((int) $relationship->getEntityId());
+    _beantragt_application_reset_access_caches();
+  }
+}
+
+/**
+ * Implements hook_user_update().
+ */
+function beantragt_application_user_update(EntityInterface $account): void {
+  _beantragt_application_reset_access_caches();
+}
+
+/**
+ * Implements hook_application_update().
+ */
+function beantragt_application_application_update(ApplicationInterface $application): void {
+  // Access to historical revisions also depends on the current case scope.
+  _beantragt_application_reset_access_caches();
+}
+
+/**
+ * Clears access handlers that can cache application scope decisions.
+ */
+function _beantragt_application_reset_access_caches(): void {
+  $manager = \Drupal::entityTypeManager();
+  foreach (['application', 'application_attachment', 'application_comment'] as $type) {
+    if ($manager->hasDefinition($type)) {
+      $manager->getAccessControlHandler($type)->resetCache();
+    }
+  }
+}
+
+/**
+ * Implements hook_modules_installed().
+ */
+function beantragt_application_modules_installed(array $modules, bool $is_syncing): void {
+  if ($is_syncing || !in_array('beantragt_roles', $modules, TRUE)) {
+    return;
+  }
+
+  \Drupal::moduleHandler()->loadInclude('beantragt_application', 'install');
+  if (!function_exists('_beantragt_application_grant_delegate_permissions')) {
+    return;
+  }
+
+  $messages = _beantragt_application_grant_delegate_permissions();
+  if ($messages !== []) {
+    \Drupal::logger('beantragt_application')->notice(implode(' ', $messages));
+  }
+}
+
+/**
+ * Implements hook_entity_base_field_info().
+ *
+ * Adds the computed profile consent offer to form schemas. Defined here
+ * rather than in beantragt_schema because the eligibility rule lives on the
+ * application entity and beantragt_schema must not depend on this module.
+ */
+function beantragt_application_entity_base_field_info(EntityTypeInterface $entity_type): array {
+  if ($entity_type->id() !== 'form_schema') {
+    return [];
+  }
+  $fields = [];
+  $fields['field_profile_sync_eligible'] = BaseFieldDefinition::create('boolean')
+    ->setLabel(t('Profile consent available'))
+    ->setDescription(t('Whether the form can offer the consent to reuse contact data for future applications.'));
+  $fields['field_bank_consent_eligible'] = BaseFieldDefinition::create('boolean')
+    ->setLabel(t('Bank consent available'))
+    ->setDescription(t('Whether the form can offer the consent to reuse bank details for future applications.'));
+  $fields['field_consent_stelle'] = BaseFieldDefinition::create('string')
+    ->setLabel(t('Consent Stelle'))
+    ->setDescription(t('Untranslated label of the organisation or jurisdiction named in the profile consent text.'));
+  $fields['field_profile_consent_offer'] = BaseFieldDefinition::create('string_long')
+    ->setLabel(t('Form-specific profile consent offers'));
+  foreach ($fields as $field) {
+    $field->setComputed(TRUE)
+      ->setReadOnly(TRUE)
+      ->setClass(FormSchemaProfileConsentItemList::class);
+  }
+  return $fields;
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_presave() for application.
+ *
+ * Generates a reference number for new applications using the injected
+ * ReferenceNumberGenerator service. This replaces a previous static
+ * \Drupal::service() call inside the entity class, following Drupal's
+ * dependency injection best practices.
+ */
+function beantragt_application_application_presave(ApplicationInterface $application): void {
+  /** @var \Drupal\beantragt_application\Service\ApplicantScopeMutationLock $scope_lock */
+  $scope_lock = \Drupal::service('beantragt_application.applicant_scope_mutation_lock');
+  if (!$scope_lock->acquireForApplication($application)) {
+    // The lock marker lets staff routes answer 423 instead of a server error.
+    throw new ApplicationDeletionLockedException('The applicant scope is currently being mutated.');
+  }
+  // SqlContentEntityStorage starts its transaction before presave hooks.
+  $scope_lock->release($application);
+
+  if (!$application->isNew()) {
+    /** @var \Drupal\beantragt_application\Service\ApplicationDependentMutationLock $mutation_lock */
+    $mutation_lock = \Drupal::service('beantragt_application.dependent_mutation_lock');
+    if (!$mutation_lock->acquireApplication($application)) {
+      throw new ApplicationDeletionLockedException('The application is currently being deleted or delivered.');
+    }
+    // SqlContentEntityStorage starts its transaction before presave hooks.
+    // The service defers this release until that root transaction completes.
+    $mutation_lock->release($application);
+  }
+
+  // Resolve the default workflow status for new applications that do not yet
+  // reference one. The default depends on the application's organisation, so
+  // it is resolved here rather than via a static field default value.
+  if ($application->hasField('field_workflow_status')) {
+    if ($application->isNew() && $application->get('field_workflow_status')->isEmpty()) {
+      _beantragt_application_set_default_workflow_status($application);
+    }
+    if ($application->get('field_workflow_status')->isEmpty()) {
+      throw new EntityStorageException('Applications require a workflow default status for their effective workspace.');
+    }
+  }
+
+  /** @var \Drupal\beantragt_application\Service\ApplicationDataProtectionService $data_protection */
+  $data_protection = \Drupal::service('beantragt_application.data_protection');
+  $data_protection->protectApplication($application);
+  $data_protection->protectApplicationIdentityLinkage($application);
+
+  if ($application->hasField('field_assigned_to') && !$application->get('field_assigned_to')->isEmpty()
+    && !($application->isNew() && $application->hasField('field_origin') && $application->get('field_origin')->value === 'bulk'
+      && $application->hasField('field_bulk_case') && !$application->get('field_bulk_case')->isEmpty() && (int) $application->get('field_assigned_to')->target_id === (int) $application->getOwnerId())
+    && !ApplicationAssignmentPolicy::personalAssignmentEnabled($application)
+    && !ApplicationAssignmentPolicy::retainsExistingAssignment($application)) {
+    throw new EntityStorageException('Personal assignment is disabled for this tenant.');
+  }
+
+  if (!$application->isNew() || !empty($application->get('field_reference_number')->value)) {
+    return;
+  }
+
+  /** @var \Drupal\beantragt_application\Service\ReferenceNumberGenerator $generator */
+  $generator = \Drupal::service('beantragt_application.reference_number_generator');
+
+  $org_id = _beantragt_application_resolve_organisation_id($application);
+
+  // Resolve form_code, the per-form pattern override and the form scope id from
+  // the linked schema entity.
+  $form_code = NULL;
+  $pattern_override = NULL;
+  $form_scope_id = NULL;
+  $schema_entity = $application->get('field_schema')->entity;
+  if ($schema_entity instanceof ContentEntityInterface) {
+    if ($schema_entity->hasField('field_form_code') && !$schema_entity->get('field_form_code')->isEmpty()) {
+      $form_code = $schema_entity->get('field_form_code')->value;
+    }
+    if ($schema_entity->hasField('field_reference_pattern') && !$schema_entity->get('field_reference_pattern')->isEmpty()) {
+      $value = trim((string) $schema_entity->get('field_reference_pattern')->value);
+      if ($value !== '') {
+        $pattern_override = $value;
+        // The form scopes its own sequence only when it carries a pattern.
+        $form_scope_id = (int) $schema_entity->id();
+      }
+    }
+  }
+
+  $application->set('field_reference_number', $generator->generate(
+    $org_id,
+    $form_code,
+    $application->uuid(),
+    $pattern_override,
+    $form_scope_id,
+  ));
+}
+
+/**
+ * Resolves the organisation context for reference number generation.
+ *
+ * @param \Drupal\beantragt_application\Entity\ApplicationInterface $application
+ *   The application entity.
+ *
+ * @return int|null
+ *   The organisation group ID, or NULL if none is available.
+ */
+function _beantragt_application_resolve_organisation_id(ApplicationInterface $application): ?int {
+  $schema_entity = $application->get('field_schema')->entity;
+  if ($schema_entity instanceof FieldableEntityInterface) {
+    if (function_exists('_beantragt_group_entity_organisation_id')) {
+      $org_id = _beantragt_group_entity_organisation_id($schema_entity);
+      if ($org_id !== NULL) {
+        return $org_id;
+      }
+    }
+
+    if ($schema_entity->hasField('field_organisation') && !$schema_entity->get('field_organisation')->isEmpty()) {
+      $org_id = (int) $schema_entity->get('field_organisation')->target_id;
+      if (_beantragt_application_group_is_organisation($org_id)) {
+        return $org_id;
+      }
+    }
+
+    if ($schema_entity->hasField('field_group') && !$schema_entity->get('field_group')->isEmpty()) {
+      $group_id = (int) $schema_entity->get('field_group')->target_id;
+      if (_beantragt_application_group_is_organisation($group_id)) {
+        return $group_id;
+      }
+    }
+  }
+
+  if (function_exists('_beantragt_group_entity_organisation_id')) {
+    $org_id = _beantragt_group_entity_organisation_id($application);
+    if ($org_id !== NULL) {
+      return $org_id;
+    }
+  }
+
+  if ($application->hasField('field_organisation') && !$application->get('field_organisation')->isEmpty()) {
+    $org_id = (int) $application->get('field_organisation')->target_id;
+    if (_beantragt_application_group_is_organisation($org_id)) {
+      return $org_id;
+    }
+  }
+
+  if ($application->hasField('field_group') && !$application->get('field_group')->isEmpty()) {
+    $group_id = (int) $application->get('field_group')->target_id;
+    if (_beantragt_application_group_is_organisation($group_id)) {
+      return $group_id;
+    }
+  }
+
+  return NULL;
+}
+
+/**
+ * Sets the default workflow status reference for a new application.
+ *
+ * Resolves the application's effective workflow group, then the group's
+ * is_default workflow_status, and sets field_workflow_status to it. A
+ * no-op when the group cannot be resolved or the group has no default
+ * status defined.
+ *
+ * @param \Drupal\beantragt_application\Entity\ApplicationInterface $application
+ *   The application entity.
+ */
+function _beantragt_application_set_default_workflow_status(ApplicationInterface $application): void {
+  $default_status_id = _beantragt_application_default_workflow_status_id($application);
+  if ($default_status_id !== NULL) {
+    $application->set('field_workflow_status', ['target_id' => $default_status_id]);
+  }
+}
+
+/**
+ * Resolves the default workflow status ID for an application.
+ *
+ * @param \Drupal\beantragt_application\Entity\ApplicationInterface $application
+ *   The application entity.
+ *
+ * @return int|null
+ *   The default workflow status entity ID, or NULL when none can be resolved.
+ */
+function _beantragt_application_default_workflow_status_id(ApplicationInterface $application): ?int {
+  $group_id = _beantragt_application_resolve_workflow_group_id($application);
+  if ($group_id === NULL) {
+    return NULL;
+  }
+
+  if (\Drupal::hasService('beantragt_application.effective_workflow_resolver')) {
+    /** @var \Drupal\beantragt_application\Service\EffectiveWorkflowResolver $resolver */
+    $resolver = \Drupal::service('beantragt_application.effective_workflow_resolver');
+    $default_status = $resolver->resolveDefaultStatusForApplication($application, $group_id);
+    if ($default_status !== NULL) {
+      return (int) $default_status->id();
+    }
+    return NULL;
+  }
+
+  if (!\Drupal::hasService('beantragt_workflow_status.status_manager')) {
+    return NULL;
+  }
+
+  /** @var \Drupal\beantragt_workflow_status\Service\WorkflowStatusManager $status_manager */
+  $status_manager = \Drupal::service('beantragt_workflow_status.status_manager');
+  $default_status = $status_manager->resolveDefaultStatusForGroup($group_id);
+  if ($default_status !== NULL) {
+    return (int) $default_status->id();
+  }
+
+  return NULL;
+}
+
+/**
+ * Resolves the group that owns an application's workflow status catalogue.
+ */
+function _beantragt_application_resolve_workflow_group_id(ApplicationInterface $application): ?int {
+  $org_id = _beantragt_application_resolve_organisation_id($application);
+  if ($org_id !== NULL) {
+    return $org_id;
+  }
+
+  $schema_entity = $application->get('field_schema')->entity;
+  if ($schema_entity instanceof FieldableEntityInterface) {
+    $jurisdiction_id = _beantragt_application_resolve_jurisdiction_id($schema_entity);
+    if ($jurisdiction_id !== NULL) {
+      return $jurisdiction_id;
+    }
+  }
+
+  return _beantragt_application_resolve_jurisdiction_id($application);
+}
+
+/**
+ * Resolves a jurisdiction group ID from a scoped entity.
+ */
+function _beantragt_application_resolve_jurisdiction_id(FieldableEntityInterface $entity): ?int {
+  if (function_exists('_beantragt_group_entity_jurisdiction_id')) {
+    $jurisdiction_id = _beantragt_group_entity_jurisdiction_id($entity);
+    if ($jurisdiction_id !== NULL && _beantragt_application_group_is_jurisdiction($jurisdiction_id)) {
+      return $jurisdiction_id;
+    }
+  }
+
+  if ($entity->hasField('field_jurisdiction') && !$entity->get('field_jurisdiction')->isEmpty()) {
+    $jurisdiction_id = (int) $entity->get('field_jurisdiction')->target_id;
+    if (_beantragt_application_group_is_jurisdiction($jurisdiction_id)) {
+      return $jurisdiction_id;
+    }
+  }
+
+  if ($entity->hasField('field_group') && !$entity->get('field_group')->isEmpty()) {
+    $group_id = (int) $entity->get('field_group')->target_id;
+    if (_beantragt_application_group_is_jurisdiction($group_id)) {
+      return $group_id;
+    }
+  }
+
+  return NULL;
+}
+
+/**
+ * Checks whether a group ID points to an organisation group.
+ */
+function _beantragt_application_group_is_organisation(int $group_id): bool {
+  if ($group_id <= 0 || !\Drupal::entityTypeManager()->hasDefinition('group')) {
+    return FALSE;
+  }
+
+  $group = \Drupal::entityTypeManager()->getStorage('group')->load($group_id);
+  return $group && $group->bundle() === 'org';
+}
+
+/**
+ * Checks whether a group ID points to a jurisdiction group.
+ */
+function _beantragt_application_group_is_jurisdiction(int $group_id): bool {
+  if ($group_id <= 0 || !\Drupal::entityTypeManager()->hasDefinition('group')) {
+    return FALSE;
+  }
+
+  $group = \Drupal::entityTypeManager()->getStorage('group')->load($group_id);
+  return $group && $group->bundle() === 'jur';
+}
+
+/**
+ * Implements hook_entity_field_access().
+ */
+function beantragt_application_entity_field_access(
+  string $operation,
+  FieldDefinitionInterface $field_definition,
+  AccountInterface $account,
+  ?FieldItemListInterface $items = NULL,
+): AccessResultInterface {
+  // Internal fields are omitted from serialization, but JSON:API also needs
+  // explicit field access denial to prevent plaintext writes on POST/PATCH.
+  if ($field_definition->getTargetEntityTypeId() === 'application_attachment'
+    && $field_definition->getName() === 'field_analysis_metadata') {
+    return AccessResult::forbidden('Attachment analysis metadata requires the dedicated API.');
+  }
+  if ($field_definition->getTargetEntityTypeId() === 'application' && $field_definition->getName() === 'revision_log_message') {
+    if ($operation === 'edit') {
+      return AccessResult::forbidden('Revision action metadata is server-managed.');
+    }
+    if ($operation === 'view' && !$account->hasPermission('administer application entities')
+      && !$account->hasPermission('bypass beantragt group scope')
+      && !$account->hasPermission('view workflow assignments')) {
+      return AccessResult::forbidden('Application revision logs are restricted to staff.')->cachePerPermissions();
+    }
+    if ($operation === 'view' && $items) {
+      $application = $items->getEntity();
+      if ($application instanceof ApplicationInterface) {
+        $log = RevisionLog::decode((string) $application->getRevisionLogMessage());
+        if (in_array('data_edited', $log['events'] ?? [], TRUE)) {
+          return AccessResult::forbidden('Data correction reasons require the audited staff history.')
+            ->setCacheMaxAge(0)->addCacheableDependency($application);
+        }
+      }
+    }
+  }
+  if ($operation === 'view' && $field_definition->getTargetEntityTypeId() === 'application' && $field_definition->getName() === 'field_bulk_case') {
+    return AccessResult::forbidden('Bulk case references require the audited staff API.');
+  }
+  if ($operation === 'view' && $field_definition->getTargetEntityTypeId() === 'application'
+    && $field_definition->getName() === 'field_public_status_token_hash') {
+    return AccessResult::forbidden('Application public status token hashes are internal.');
+  }
+  if ($operation === 'edit' && $field_definition->getTargetEntityTypeId() === 'application'
+    && in_array($field_definition->getName(), ['revision_user', 'revision_created', 'field_origin', 'field_bulk_case'], TRUE)) {
+    // Explicit revision authors and times are trusted when set on the
+    // server, so API clients must not supply them.
+    $access = AccessResult::forbidden('Application revision authors and times are server-managed.');
+    return $items ? $access->addCacheableDependency($items->getEntity()) : $access;
+  }
+  if ($operation === 'edit' && $field_definition->getTargetEntityTypeId() === 'application'
+    && in_array($field_definition->getName(), ['field_delivery_route', 'field_delivery_record'], TRUE)) {
+    // Intake and the scoped staff delivery API write them on the server.
+    $access = AccessResult::forbidden('Delivery route and record are server-managed.');
+    return $items ? $access->addCacheableDependency($items->getEntity()) : $access;
+  }
+  if ($operation === 'edit' && $field_definition->getTargetEntityTypeId() === 'application_attachment'
+    && in_array($field_definition->getName(), ['field_scan_sha256', 'field_submission_revision_id', 'field_scan_status'], TRUE)) {
+    return AccessResult::forbidden('Attachment scan and submission proofs are server-managed.');
+  }
+  if ($operation === 'view'
+    && $field_definition->getTargetEntityTypeId() === 'form_schema'
+    && isset(FormSchemaProfileConsentItemList::FIELD_KEYS[$field_definition->getName()])) {
+    // The computed consent offer follows group labels and publication states.
+    // Field access cacheability is merged into the JSON:API field
+    // normalization, so cached schema projections expire with these groups.
+    $result = AccessResult::neutral();
+    $form = $items?->getEntity();
+    if ($form instanceof ContentEntityInterface) {
+      foreach (ProfileConsentScope::cacheableGroups($form) as $group) {
+        $result->addCacheableDependency($group);
+      }
+    }
+    return $result;
+  }
+  if ($operation === 'view'
+    && $field_definition->getTargetEntityTypeId() === 'application'
+    && $field_definition->getName() === 'field_data') {
+    if (!$items) {
+      return AccessResult::neutral()->cachePerPermissions();
+    }
+
+    $application = $items->getEntity();
+    if (!$application instanceof ApplicationInterface || $application->isNew()) {
+      return AccessResult::neutral()
+        ->cachePerPermissions()
+        ->cachePerUser();
+    }
+
+    /** @var \Drupal\beantragt_application\Service\ApplicationDataProtectionService $data_protection */
+    $data_protection = \Drupal::service('beantragt_application.data_protection');
+    try {
+      $requires_reveal = $data_protection->applicationRequiresProtectedReveal($application);
+    }
+    catch (\Throwable) {
+      $requires_reveal = TRUE;
+    }
+    if ($requires_reveal) {
+      if (_beantragt_application_account_may_reveal_protected_data($application, $account)
+        && _beantragt_application_account_may_reveal_current_data($application, $account)) {
+        return AccessResult::neutral()
+          ->cachePerPermissions()
+          ->cachePerUser()
+          ->setCacheMaxAge(0)
+          ->addCacheTags(ApplicationCaseScope::cacheTags($account))
+          ->addCacheableDependency($application);
+      }
+      return AccessResult::forbidden('Application field_data contains protected values.')
+        ->cachePerPermissions()
+        ->cachePerUser()
+        ->setCacheMaxAge(0)
+        ->addCacheTags(ApplicationCaseScope::cacheTags($account))
+        ->addCacheableDependency($application);
+    }
+
+    return AccessResult::neutral()
+      ->cachePerPermissions()
+      ->cachePerUser()
+      ->setCacheMaxAge(0)
+      ->addCacheTags(ApplicationCaseScope::cacheTags($account))
+      ->addCacheableDependency($application);
+  }
+
+  if ($operation === 'view'
+    && $field_definition->getTargetEntityTypeId() === 'application'
+    && in_array($field_definition->getName(), [
+      'field_crm_data',
+      'field_applicant_email',
+      'field_applicant_email_hash',
+      'field_workflow_attributes',
+      'field_email_confirmed',
+      'field_email_confirmation_token_hash',
+      'field_email_confirmation_expires',
+      'field_email_confirmed_time',
+      'field_profile_consent_record',
+      'field_bank_consent_record',
+      'field_delivery_record',
+    ], TRUE)) {
+    if (!$items) {
+      return AccessResult::neutral()->cachePerPermissions();
+    }
+
+    $application = $items->getEntity();
+    if (!$application instanceof ApplicationInterface || $application->isNew()) {
+      return AccessResult::neutral()
+        ->cachePerPermissions()
+        ->cachePerUser();
+    }
+
+    if ($account->hasPermission('administer application entities')
+      || $account->hasPermission('bypass beantragt group scope')) {
+      return AccessResult::neutral()
+        ->cachePerPermissions()
+        ->cachePerUser()
+        ->setCacheMaxAge(0)
+        ->addCacheableDependency($application);
+    }
+
+    $reason = match ($field_definition->getName()) {
+      'field_applicant_email' => 'Application applicant email must be read through the scoped staff API.',
+      'field_applicant_email_hash' => 'Application applicant email lookup hashes are internal.',
+      'field_workflow_attributes' => 'Application workflow attributes must be read through the scoped staff API.',
+      'field_email_confirmed' => 'Application email confirmation state is internal.',
+      'field_email_confirmation_token_hash' => 'Application email confirmation token hashes are internal.',
+      'field_email_confirmation_expires' => 'Application email confirmation expiry is internal.',
+      'field_email_confirmed_time' => 'Application email confirmation timestamp is internal.',
+      'field_profile_consent_record', 'field_bank_consent_record' => 'Application consent proofs must be read through the scoped staff API.',
+      'field_delivery_record' => 'Delivery records must be read through the scoped staff API.',
+      default => 'Application CRM data must be read through the scoped staff API.',
+    };
+
+    return AccessResult::forbidden($reason)
+      ->cachePerPermissions()
+      ->cachePerUser()
+      ->setCacheMaxAge(0)
+      ->addCacheableDependency($application);
+  }
+
+  if ($operation === 'view'
+    && $field_definition->getTargetEntityTypeId() === 'application'
+    && in_array($field_definition->getName(), ['field_assigned_to', 'field_assigned_team', 'revision_user'], TRUE)) {
+    // The revision author names a staff account like the assignment does.
+    if ($account->hasPermission('administer application entities')
+      || $account->hasPermission('bypass beantragt group scope')
+      || $account->hasPermission('view workflow assignments')) {
+      return AccessResult::neutral()->cachePerPermissions();
+    }
+
+    return AccessResult::forbidden('Application assignments and revision authors require the view workflow assignments permission.')
+      ->cachePerPermissions();
+  }
+
+  if ($operation !== 'edit' || $field_definition->getTargetEntityTypeId() !== 'application') {
+    return AccessResult::neutral();
+  }
+
+  // JSON:API PATCH consults field access even for read-only definitions.
+  if (!$field_definition->isReadOnly() && !in_array($field_definition->getName(), [
+    'field_workflow_status',
+    'field_due_date',
+    'field_workflow_attributes',
+    'field_organisation',
+    'field_jurisdiction',
+    'field_group',
+    'field_schema',
+    'field_reference_number',
+    'field_crm_data',
+    'field_schema_version',
+    'field_receipt_form_title',
+    'field_proof_assignments',
+    'uid',
+    'status',
+    'created',
+    'field_data',
+    'field_public_status_token_hash',
+    'field_applicant_email',
+    'field_applicant_email_hash',
+    'field_email_confirmed',
+    'field_email_confirmation_token_hash',
+    'field_email_confirmation_expires',
+    'field_email_confirmed_time',
+    'field_assigned_to',
+    'field_assigned_team',
+    'field_profile_consent',
+    'field_profile_consent_record',
+    'field_bank_consent',
+    'field_bank_consent_record',
+  ], TRUE)) {
+    return AccessResult::neutral();
+  }
+
+  if (!$items) {
+    return AccessResult::neutral()->cachePerPermissions();
+  }
+
+  $application = $items->getEntity();
+  if (!$application instanceof ApplicationInterface || $application->isNew()) {
+    return AccessResult::neutral()
+      ->cachePerPermissions()
+      ->cachePerUser();
+  }
+
+  $reason = match ($field_definition->getName()) {
+    'field_workflow_status' => 'Workflow status must be edited through the audited status endpoint.',
+    'field_due_date' => 'Deadlines must be edited through the audited deadline endpoint.',
+    'field_workflow_attributes' => 'Workflow attributes must be edited through the audited status endpoint.',
+    'field_organisation' => 'Application scope must be edited through the audited delegation endpoint.',
+    'field_jurisdiction' => 'Application scope is managed by the server.',
+    'field_group' => 'Application scope is managed by the server.',
+    'field_schema' => 'The submitted form is immutable after creation.',
+    'uid' => 'The application owner is managed by the server.',
+    'status' => 'The application publication state is managed by the server.',
+    'created' => 'The application submission time is managed by the server.',
+    'field_data' => 'Application field_data must be edited through the audited data endpoint.',
+    'field_assigned_to' => 'Application assignments must be edited through the audited assignment endpoint.',
+    'field_assigned_team' => 'Application assignments must be edited through the audited assignment endpoint.',
+    'field_applicant_email' => 'Application applicant email must be derived from submitted data.',
+    'field_applicant_email_hash' => 'Application applicant email lookup hashes are immutable after creation.',
+    'field_email_confirmed' => 'Application email confirmation state is managed by the confirmation endpoint.',
+    'field_email_confirmation_token_hash' => 'Application email confirmation token hashes are managed by the confirmation endpoint.',
+    'field_email_confirmation_expires' => 'Application email confirmation expiry is managed by the confirmation endpoint.',
+    'field_email_confirmed_time' => 'Application email confirmation timestamp is managed by the confirmation endpoint.',
+    'field_profile_consent', 'field_profile_consent_record', 'field_bank_consent', 'field_bank_consent_record' => 'Application consent proofs are server-managed and immutable after submission.',
+    'field_public_status_token_hash' => 'Application public status token hashes are immutable after creation.',
+    default => 'This application field is server-managed and cannot be edited after creation.',
+  };
+
+  return AccessResult::forbidden($reason)
+    ->cachePerPermissions()
+    ->cachePerUser()
+    ->addCacheableDependency($application);
+}
+
+/**
+ * Implements hook_jsonapi_entity_field_filter_access().
+ *
+ * JSON:API checks filter, sort and relationship paths with the field
+ * definition alone, where beantragt_application_entity_field_access() stays
+ * neutral (no items). Without this hook a filter on a hidden field answers
+ * per application whether a value matches (meta.omitted carries the UUIDs),
+ * also for anonymous requests. So every application field whose view the
+ * field access hook can refuse is refused here for the same accounts.
+ */
+function beantragt_application_jsonapi_entity_field_filter_access(FieldDefinitionInterface $field_definition, AccountInterface $account): AccessResultInterface {
+  $entity_type_id = $field_definition->getTargetEntityTypeId();
+  $field_name = $field_definition->getName();
+  if ($entity_type_id === 'application_attachment' && $field_name === 'field_analysis_metadata') {
+    return AccessResult::forbidden('Attachment analysis metadata requires the dedicated API.');
+  }
+  if ($entity_type_id !== 'application') {
+    return AccessResult::neutral();
+  }
+  if ($field_name === 'field_bulk_case') {
+    // Its view is refused for every account.
+    return AccessResult::forbidden('Bulk case references require the audited staff API.');
+  }
+  if ($field_name === 'field_public_status_token_hash') {
+    return AccessResult::forbidden('Application public status token hashes are internal.');
+  }
+  if ($field_name === 'revision_log_message') {
+    return AccessResult::forbidden('Application revision logs cannot be filtered or sorted.');
+  }
+  $staff_scope = $account->hasPermission('administer application entities')
+    || $account->hasPermission('bypass beantragt group scope');
+  if (in_array($field_name, ['field_assigned_to', 'field_assigned_team', 'revision_user'], TRUE)) {
+    return $staff_scope || $account->hasPermission('view workflow assignments')
+      ? AccessResult::neutral()->cachePerPermissions()
+      : AccessResult::forbidden('Application assignments and revision metadata cannot be filtered or sorted without the view workflow assignments permission.')->cachePerPermissions();
+  }
+  if (in_array($field_name, [
+    'field_data',
+    'field_crm_data',
+    'field_applicant_email',
+    'field_applicant_email_hash',
+    'field_workflow_attributes',
+    'field_email_confirmed',
+    'field_email_confirmation_token_hash',
+    'field_email_confirmation_expires',
+    'field_email_confirmed_time',
+    'field_profile_consent_record',
+    'field_bank_consent_record',
+    'field_delivery_record',
+  ], TRUE)) {
+    return $staff_scope
+      ? AccessResult::neutral()->cachePerPermissions()
+      : AccessResult::forbidden('Protected application fields cannot be filtered or sorted.')->cachePerPermissions();
+  }
+  return AccessResult::neutral();
+}
+
+/**
+ * Checks the same protected field_data reveal policy used by the admin route.
+ */
+function _beantragt_application_account_may_reveal_protected_data(ApplicationInterface $application, AccountInterface $account): bool {
+  if ($account->hasPermission('administer application entities')
+    || $account->hasPermission('bypass beantragt group scope')) {
+    return TRUE;
+  }
+  if (!$account->hasPermission('view protected application data')) {
+    return FALSE;
+  }
+
+  return \Drupal::service('beantragt_application.protected_data_gate')->allows($application, $account);
+}
+
+/**
+ * Requires the reveal right on the current scope for a historical revision.
+ *
+ * A past revision carries the scope group of its time. Like entity access,
+ * a historical grant never revives access that the account has lost since.
+ */
+function _beantragt_application_account_may_reveal_current_data(ApplicationInterface $application, AccountInterface $account): bool {
+  if ($application->isDefaultRevision()) {
+    return TRUE;
+  }
+  $current = \Drupal::entityTypeManager()->getStorage('application')->loadUnchanged($application->id());
+  return $current instanceof ApplicationInterface
+    && _beantragt_application_account_may_reveal_protected_data($current, $account);
+}
+
+/**
+ * Implements hook_cron().
+ *
+ * Enforces GDPR data retention policy by deleting applications
+ * older than the configured retention period. Also cleans up orphaned
+ * applicants that have no remaining applications.
+ */
+function beantragt_application_cron(): void {
+  /** @var \Drupal\beantragt_application\Service\RetentionCleanupService $retention */
+  $retention = \Drupal::service('beantragt_application.retention_cleanup');
+  $retention->run(FALSE);
+  \Drupal::service('beantragt_application.protected_access_log')->purge();
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_update() for application_attachment.
+ */
+function beantragt_application_application_attachment_update(EntityInterface $entity): void {
+  try {
+    if (!$entity instanceof ApplicationAttachmentInterface) {
+      return;
+    }
+
+    $original = $entity->getOriginal();
+    $was_claimed = $original instanceof ApplicationAttachmentInterface
+      && !$original->get('field_application')->isEmpty();
+    $is_claimed = !$entity->get('field_application')->isEmpty();
+    if ($was_claimed || !$is_claimed) {
+      return;
+    }
+
+    try {
+      /** @var \Drupal\beantragt_application\Service\AttachmentAnalysisDispatcher $dispatcher */
+      $dispatcher = \Drupal::service('beantragt_application.attachment_analysis_dispatcher');
+      $dispatcher->enqueue($entity);
+    }
+    catch (\Throwable $e) {
+      \Drupal::logger('beantragt_application')->error('Attachment analysis enqueue failed for attachment @id: @exception.', [
+        '@id' => $entity->id() ?? 'new',
+        '@exception' => get_class($e),
+      ]);
+    }
+  }
+  finally {
+    _beantragt_application_release_dependent_mutation_lock($entity);
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_presave() for application_attachment.
+ */
+function beantragt_application_application_attachment_presave(EntityInterface $entity): void {
+  _beantragt_application_acquire_dependent_mutation_lock($entity);
+  _beantragt_application_release_dependent_mutation_lock($entity);
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_insert() for application_attachment.
+ */
+function beantragt_application_application_attachment_insert(EntityInterface $entity): void {
+  _beantragt_application_release_dependent_mutation_lock($entity);
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_delete() for application_attachment.
+ */
+function beantragt_application_application_attachment_delete(EntityInterface $entity): void {
+  if (!$entity instanceof ApplicationAttachmentInterface
+    || !$entity->hasField('field_guard_derivative')
+    || $entity->get('field_guard_derivative')->isEmpty()) {
+    return;
+  }
+
+  $file = \Drupal::entityTypeManager()->getStorage('file')->load(
+    (int) $entity->get('field_guard_derivative')->target_id,
+  );
+  if ($file instanceof FileInterface) {
+    $file->delete();
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_presave() for application_comment.
+ */
+function beantragt_application_application_comment_presave(EntityInterface $entity): void {
+  _beantragt_application_acquire_dependent_mutation_lock($entity);
+  _beantragt_application_release_dependent_mutation_lock($entity);
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_insert() for application_comment.
+ */
+function beantragt_application_application_comment_insert(EntityInterface $entity): void {
+  _beantragt_application_release_dependent_mutation_lock($entity);
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_update() for application_comment.
+ */
+function beantragt_application_application_comment_update(EntityInterface $entity): void {
+  _beantragt_application_release_dependent_mutation_lock($entity);
+}
+
+/**
+ * Acquires the shared application lock for one dependent mutation.
+ */
+function _beantragt_application_acquire_dependent_mutation_lock(EntityInterface $entity): void {
+  /** @var \Drupal\beantragt_application\Service\ApplicationDependentMutationLock $lock */
+  $lock = \Drupal::service('beantragt_application.dependent_mutation_lock');
+  $lock->acquire($entity);
+}
+
+/**
+ * Releases the shared application lock after one dependent mutation.
+ */
+function _beantragt_application_release_dependent_mutation_lock(EntityInterface $entity): void {
+  /** @var \Drupal\beantragt_application\Service\ApplicationDependentMutationLock $lock */
+  $lock = \Drupal::service('beantragt_application.dependent_mutation_lock');
+  $lock->release($entity);
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_predelete() for application entities.
+ */
+function beantragt_application_application_predelete(ApplicationInterface $application): void {
+  /** @var \Drupal\beantragt_application\Service\RetentionCleanupService $retention */
+  $retention = \Drupal::service('beantragt_application.retention_cleanup');
+  $retention->deleteApplicationDependents([(int) $application->id()]);
+  \Drupal::service('beantragt_application.message_read_state')->deleteFor('application_id', (int) $application->id());
+}
+
+/**
+ * Implements hook_entity_presave().
+ *
+ * Entity-type hooks run first. Capture the final domain changes after them.
+ */
+#[\Drupal\Core\Hook\Attribute\LegacyHook]
+function beantragt_application_entity_presave(EntityInterface $entity): void {
+  (new RevisionHooks())->entityPresave($entity);
+}
+
+/**
+ * Implements hook_module_implements_alter().
+ */
+#[\Drupal\Core\Hook\Attribute\LegacyModuleImplementsAlter]
+function beantragt_application_module_implements_alter(array &$implementations, string $hook): void {
+  if ($hook === 'entity_presave' && isset($implementations['beantragt_application'])) {
+    $implementation = $implementations['beantragt_application'];
+    unset($implementations['beantragt_application']);
+    $implementations['beantragt_application'] = $implementation;
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_delete() for user entities.
+ */
+function beantragt_application_user_delete(EntityInterface $account): void {
+  \Drupal::service('beantragt_application.message_read_state')->deleteFor('uid', (int) $account->id());
+}

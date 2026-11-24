@@ -1,0 +1,104 @@
+# Internal staff routes, Nuxt proxy only (N18): no OpenAPI, no Bruno.
+beantragt_nachreichung.card:
+  path: '/api/admin/applications/{application}/nachreichung'
+  defaults:
+    _controller: '\Drupal\beantragt_nachreichung\Controller\NachreichungController::card'
+    _format: json
+  requirements:
+    _entity_access: 'application.view'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationDataController::protectedDataAccess'
+    _permission: 'view protected application data'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_nachreichung.cover_print:
+  path: '/api/admin/applications/{application}/cover-sheet'
+  defaults:
+    _controller: '\Drupal\beantragt_nachreichung\Controller\NachreichungController::printSheet'
+  requirements:
+    _entity_access: 'application.view'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationDataController::protectedDataAccess'
+    _permission: 'view protected application data'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_nachreichung.cover_revoke:
+  path: '/api/admin/applications/{application}/cover-sheets/{cover}/revoke'
+  defaults:
+    _controller: '\Drupal\beantragt_nachreichung\Controller\NachreichungController::revoke'
+    _format: json
+  requirements:
+    cover: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _entity_access: 'application.view'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationDataController::protectedDataAccess'
+    _permission: 'view protected application data'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_nachreichung.deadline:
+  path: '/api/admin/applications/{application}/nachforderung/{nachforderung}/deadline'
+  defaults:
+    _controller: '\Drupal\beantragt_nachreichung\Controller\NachreichungController::extendDeadline'
+    _format: json
+  requirements:
+    nachforderung: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _entity_access: 'application.view'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationDataController::protectedDataAccess'
+    _permission: 'view protected application data'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_nachreichung.remove:
+  path: '/api/admin/applications/{application}/nachreichung/{entry}/remove'
+  defaults:
+    _controller: '\Drupal\beantragt_nachreichung\Controller\NachreichungController::remove'
+    _format: json
+  requirements:
+    entry: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _entity_access: 'application.view'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationDataController::protectedDataAccess'
+    _permission: 'view protected application data,revert nachreichung'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_nachreichung.reassign:
+  path: '/api/admin/applications/{application}/nachreichung/{entry}/reassign'
+  defaults:
+    _controller: '\Drupal\beantragt_nachreichung\Controller\NachreichungController::reassign'
+    _format: json
+  requirements:
+    entry: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _entity_access: 'application.view'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationDataController::protectedDataAccess'
+    _permission: 'view protected application data,revert nachreichung'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application

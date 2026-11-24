@@ -1,0 +1,1278 @@
+{
+  "form": {
+    "title": "SYNTHETIC US116 complete mapping",
+    "sections": [
+      {
+        "id": "synthetic",
+        "title": "SYNTHETIC fields",
+        "fields": [
+          {
+            "id": "synthetic_field_1",
+            "label": "SYNTHETIC Eingetragener Name / Organisationsname",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_2",
+            "label": "SYNTHETIC Einverständnis E-Mail",
+            "type": "checkbox",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_3",
+            "label": "SYNTHETIC E-Mail Personalangelegenheit",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_4",
+            "label": "SYNTHETIC Telefon",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_5",
+            "label": "SYNTHETIC Telefax",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_6",
+            "label": "SYNTHETIC Familienname",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_7",
+            "label": "SYNTHETIC Vornamen",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_8",
+            "label": "SYNTHETIC Doktorgrade",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_9",
+            "label": "SYNTHETIC Einverständnis E-Mail",
+            "type": "checkbox",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_10",
+            "label": "SYNTHETIC Telefon",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_11",
+            "label": "SYNTHETIC Telefax",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_12",
+            "label": "SYNTHETIC E-Mail",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_13",
+            "label": "SYNTHETIC Straße",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_14",
+            "label": "SYNTHETIC Hausnummer",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_15",
+            "label": "SYNTHETIC Postleitzahl",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_16",
+            "label": "SYNTHETIC Ort",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_17",
+            "label": "SYNTHETIC Anschrift Zusatzangaben",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_18",
+            "label": "SYNTHETIC Postleitzahl",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_19",
+            "label": "SYNTHETIC Ort",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_20",
+            "label": "SYNTHETIC Postfach",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_21",
+            "label": "SYNTHETIC Status Frau (schwanger, stillend)",
+            "type": "select",
+            "required": true,
+            "options": [
+              "synthetic_option_0",
+              "synthetic_option_1"
+            ]
+          },
+          {
+            "id": "synthetic_field_22",
+            "label": "SYNTHETIC Voraussichtlicher Entbindungstermin",
+            "type": "date",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_23",
+            "label": "SYNTHETIC Entbindungstermin",
+            "type": "date",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_24",
+            "label": "SYNTHETIC Ergebnis Entbindung",
+            "type": "select",
+            "required": true,
+            "options": [
+              "synthetic_option_0",
+              "synthetic_option_1",
+              "synthetic_option_2",
+              "synthetic_option_3",
+              "synthetic_option_4"
+            ]
+          },
+          {
+            "id": "synthetic_field_25",
+            "label": "SYNTHETIC Nachweis Schutzfristverlängerung Behinderung",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_26",
+            "label": "SYNTHETIC Familienname",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_27",
+            "label": "SYNTHETIC Vornamen",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_28",
+            "label": "SYNTHETIC Tag (ohne Monat und Jahr)",
+            "type": "select",
+            "required": true,
+            "options": [
+              "synthetic_integer"
+            ]
+          },
+          {
+            "id": "synthetic_field_29",
+            "label": "SYNTHETIC Monat",
+            "type": "select",
+            "required": true,
+            "options": [
+              "synthetic_integer"
+            ]
+          },
+          {
+            "id": "synthetic_field_30",
+            "label": "SYNTHETIC Jahr",
+            "type": "select",
+            "required": true,
+            "options": [
+              "synthetic_integer"
+            ]
+          },
+          {
+            "id": "synthetic_field_31",
+            "label": "SYNTHETIC Abfrage Anschrift Inland oder Ausland",
+            "type": "select",
+            "required": true,
+            "options": [
+              "synthetic_option_0",
+              "synthetic_option_1"
+            ]
+          },
+          {
+            "id": "synthetic_field_32",
+            "label": "SYNTHETIC Straße",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_33",
+            "label": "SYNTHETIC Hausnummer",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_34",
+            "label": "SYNTHETIC Postleitzahl",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_35",
+            "label": "SYNTHETIC Ort",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_36",
+            "label": "SYNTHETIC Anschrift Zusatzangaben",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_37",
+            "label": "SYNTHETIC Postleitzahl",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_38",
+            "label": "SYNTHETIC Ort",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_39",
+            "label": "SYNTHETIC Postfach",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_42",
+            "label": "SYNTHETIC Beschäftigungsverhältnis Frau",
+            "type": "select",
+            "required": true,
+            "options": [
+              "synthetic_option_0",
+              "synthetic_option_1",
+              "synthetic_option_2",
+              "synthetic_option_3",
+              "synthetic_option_4",
+              "synthetic_option_5",
+              "synthetic_option_6",
+              "synthetic_option_7",
+              "synthetic_option_8"
+            ]
+          },
+          {
+            "id": "synthetic_field_43",
+            "label": "SYNTHETIC Beschäftigungsverhältnis Frau Sonstiges",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_44",
+            "label": "SYNTHETIC Vertrag Befristung",
+            "type": "select",
+            "required": true,
+            "options": [
+              "synthetic_option_0",
+              "synthetic_option_1"
+            ]
+          },
+          {
+            "id": "synthetic_field_45",
+            "label": "SYNTHETIC Beschäftigungsbeginn",
+            "type": "date",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_46",
+            "label": "SYNTHETIC Beschäftigungsende",
+            "type": "date",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_47",
+            "label": "SYNTHETIC Kündigungsdatum",
+            "type": "date",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_48",
+            "label": "SYNTHETIC Anfang",
+            "type": "date",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_49",
+            "label": "SYNTHETIC Ende",
+            "type": "date",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_50",
+            "label": "SYNTHETIC Sonn- und Feiertagsarbeit (Mutterschutz)",
+            "type": "checkbox",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_51",
+            "label": "SYNTHETIC Nachtarbeit (Mutterschutz)",
+            "type": "checkbox",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_52",
+            "label": "SYNTHETIC Mutterschutz getaktete Arbeit",
+            "type": "checkbox",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_53",
+            "label": "SYNTHETIC Teilnahme an Ausbildungsveranstaltungen (Mutterschutz)",
+            "type": "checkbox",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_54",
+            "label": "SYNTHETIC Heimarbeit (Mutterschutz)",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_55",
+            "label": "SYNTHETIC Umfang Heimarbeit (schwanger - Mutterschutz)",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_56",
+            "label": "SYNTHETIC Umfang Heimarbeit (stillend - Mutterschutz)",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_57",
+            "label": "SYNTHETIC Bereiterklärung Sonn- und Feiertagsarbeit",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_58",
+            "label": "SYNTHETIC Nachweis: Ersatzruhetag",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_59",
+            "label": "SYNTHETIC Nachweis: Ausnahme § 10 Arbeitszeitgesetz ",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_60",
+            "label": "SYNTHETIC Datum der Antragstellung",
+            "type": "date",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_61",
+            "label": "SYNTHETIC Erklärung Nachtarbeit",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_62",
+            "label": "SYNTHETIC Status Antrag Nachtarbeit",
+            "type": "select",
+            "required": true,
+            "options": [
+              "synthetic_option_0",
+              "synthetic_option_1",
+              "synthetic_option_2",
+              "synthetic_option_3"
+            ]
+          },
+          {
+            "id": "synthetic_field_63",
+            "label": "SYNTHETIC Genehmigungsdatum",
+            "type": "date",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_64",
+            "label": "SYNTHETIC Ärztliches Zeugnis (Unbedenklichkeitsbescheinigung)",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_65",
+            "label": "SYNTHETIC Nachweis: Ausschluss Gefährdung durch Alleinarbeit",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_66",
+            "label": "SYNTHETIC Nachweis",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_67",
+            "label": "SYNTHETIC Nachtarbeit Ausbildung (Bereiterklärung)",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_68",
+            "label": "SYNTHETIC Nachweis: Erforderlichkeit Teilnahme an Ausbildungsveranstaltungen",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_69",
+            "label": "SYNTHETIC Nachweis: Ausschluss Gefährdung durch Alleinarbeit",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_70",
+            "label": "SYNTHETIC Tagesarbeitszeit",
+            "type": "number",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_71",
+            "label": "SYNTHETIC Doppelwochenarbeitszeit",
+            "type": "number",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_72",
+            "label": "SYNTHETIC Uhrzeit des frühest möglichen Arbeits- oder Ausbildungsbeginns",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_73",
+            "label": "SYNTHETIC Uhrzeit des spätest möglichen Arbeits- oder Ausbildungsendes",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_74",
+            "label": "SYNTHETIC Dauer aller Ruhepause in Minuten ",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_75",
+            "label": "SYNTHETIC Nachweis: Ausschluss Ruhezeiten unter 11 Stunden",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_76",
+            "label": "SYNTHETIC Nachweis: Freistellung Untersuchungen",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_77",
+            "label": "SYNTHETIC Nachweis: Vermeidung von Nachteilen ",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_78",
+            "label": "SYNTHETIC Ergebnis der Beurteilung der Arbeitsbedingungen",
+            "type": "select",
+            "required": true,
+            "options": [
+              "synthetic_option_0",
+              "synthetic_option_1",
+              "synthetic_option_2",
+              "synthetic_option_3",
+              "synthetic_option_4",
+              "synthetic_option_5",
+              "synthetic_option_6"
+            ]
+          },
+          {
+            "id": "synthetic_field_79",
+            "label": "SYNTHETIC Umgestaltung der Arbeitsbedingungen",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_80",
+            "label": "SYNTHETIC Gefährdungsbeurteilung Mutterschutz",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_81",
+            "label": "SYNTHETIC Nachweis: Umgestaltung der Arbeitsbedingungen durch Schutzmaßnahmen",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_82",
+            "label": "SYNTHETIC Berufliche Tätigkeit - Art",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_83",
+            "label": "SYNTHETIC Beschäftigungsort",
+            "type": "select",
+            "required": true,
+            "options": [
+              "synthetic_option_0",
+              "synthetic_option_1",
+              "synthetic_option_2",
+              "synthetic_option_3"
+            ]
+          },
+          {
+            "id": "synthetic_field_84",
+            "label": "SYNTHETIC Name Arbeitsplatz Gefährdungsbeurteilung",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_85",
+            "label": "SYNTHETIC Eingetragener Name / Organisationsname",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_86",
+            "label": "SYNTHETIC Einverständnis E-Mail",
+            "type": "checkbox",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_87",
+            "label": "SYNTHETIC E-Mail Personalangelegenheit",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_88",
+            "label": "SYNTHETIC Telefon",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_89",
+            "label": "SYNTHETIC Telefax",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_90",
+            "label": "SYNTHETIC Straße",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_91",
+            "label": "SYNTHETIC Hausnummer",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_92",
+            "label": "SYNTHETIC Postleitzahl",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_93",
+            "label": "SYNTHETIC Ort",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_94",
+            "label": "SYNTHETIC Anschrift Zusatzangaben",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_95",
+            "label": "SYNTHETIC Berufliche Tätigkeit - Art",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_96",
+            "label": "SYNTHETIC Beschäftigungsort",
+            "type": "select",
+            "required": true,
+            "options": [
+              "synthetic_option_0",
+              "synthetic_option_1",
+              "synthetic_option_2",
+              "synthetic_option_3"
+            ]
+          },
+          {
+            "id": "synthetic_field_97",
+            "label": "SYNTHETIC Name Arbeitsplatz Gefährdungsbeurteilung",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_98",
+            "label": "SYNTHETIC Eingetragener Name / Organisationsname",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_99",
+            "label": "SYNTHETIC Einverständnis E-Mail",
+            "type": "checkbox",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_100",
+            "label": "SYNTHETIC E-Mail Personalangelegenheit",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_101",
+            "label": "SYNTHETIC Telefon",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_102",
+            "label": "SYNTHETIC Telefax",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_103",
+            "label": "SYNTHETIC Straße",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_104",
+            "label": "SYNTHETIC Hausnummer",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_105",
+            "label": "SYNTHETIC Postleitzahl",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_106",
+            "label": "SYNTHETIC Ort",
+            "type": "text",
+            "required": true
+          },
+          {
+            "id": "synthetic_field_107",
+            "label": "SYNTHETIC Anschrift Zusatzangaben",
+            "type": "text",
+            "required": true
+          }
+        ]
+      }
+    ]
+  },
+  "rules": {
+    "version": 1,
+    "rules": [
+      {
+        "source": "synthetic_field_1",
+        "target": "/GSynthetic069/FSynthetic068"
+      },
+      {
+        "source": "synthetic_field_2",
+        "target": "/GSynthetic069/GSynthetic084/FSynthetic034"
+      },
+      {
+        "source": "synthetic_field_3",
+        "target": "/GSynthetic069/GSynthetic084/FSynthetic046"
+      },
+      {
+        "source": "synthetic_field_4",
+        "target": "/GSynthetic069/GSynthetic084/FSynthetic057"
+      },
+      {
+        "source": "synthetic_field_5",
+        "target": "/GSynthetic069/GSynthetic084/FSynthetic058"
+      },
+      {
+        "source": "synthetic_field_6",
+        "target": "/GSynthetic069/GSynthetic086/FSynthetic051"
+      },
+      {
+        "source": "synthetic_field_7",
+        "target": "/GSynthetic069/GSynthetic086/FSynthetic052"
+      },
+      {
+        "source": "synthetic_field_8",
+        "target": "/GSynthetic069/GSynthetic086/FSynthetic053"
+      },
+      {
+        "source": "synthetic_field_9",
+        "target": "/GSynthetic069/GSynthetic086/GSynthetic080/FSynthetic034"
+      },
+      {
+        "source": "synthetic_field_10",
+        "target": "/GSynthetic069/GSynthetic086/GSynthetic080/FSynthetic057"
+      },
+      {
+        "source": "synthetic_field_11",
+        "target": "/GSynthetic069/GSynthetic086/GSynthetic080/FSynthetic058"
+      },
+      {
+        "source": "synthetic_field_12",
+        "target": "/GSynthetic069/GSynthetic086/GSynthetic080/FSynthetic059"
+      },
+      {
+        "source": "synthetic_field_13",
+        "target": "/GSynthetic069/GSynthetic093/GSynthetic091/FSynthetic060"
+      },
+      {
+        "source": "synthetic_field_14",
+        "target": "/GSynthetic069/GSynthetic093/GSynthetic091/FSynthetic061"
+      },
+      {
+        "source": "synthetic_field_15",
+        "target": "/GSynthetic069/GSynthetic093/GSynthetic091/FSynthetic062"
+      },
+      {
+        "source": "synthetic_field_16",
+        "target": "/GSynthetic069/GSynthetic093/GSynthetic091/FSynthetic063"
+      },
+      {
+        "source": "synthetic_field_17",
+        "target": "/GSynthetic069/GSynthetic093/GSynthetic091/FSynthetic064"
+      },
+      {
+        "source": "synthetic_field_18",
+        "target": "/GSynthetic069/GSynthetic093/GSynthetic092/FSynthetic062"
+      },
+      {
+        "source": "synthetic_field_19",
+        "target": "/GSynthetic069/GSynthetic093/GSynthetic092/FSynthetic063"
+      },
+      {
+        "source": "synthetic_field_20",
+        "target": "/GSynthetic069/GSynthetic093/GSynthetic092/FSynthetic065"
+      },
+      {
+        "source": "synthetic_field_21",
+        "target": "/GSynthetic078/*/GSynthetic070/FSynthetic003",
+        "valueMap": {
+          "synthetic_option_0": "001",
+          "synthetic_option_1": "002"
+        }
+      },
+      {
+        "source": "synthetic_field_22",
+        "target": "/GSynthetic078/*/GSynthetic070/FSynthetic008"
+      },
+      {
+        "source": "synthetic_field_23",
+        "target": "/GSynthetic078/*/GSynthetic070/FSynthetic009"
+      },
+      {
+        "source": "synthetic_field_24",
+        "target": "/GSynthetic078/*/GSynthetic070/FSynthetic010/*",
+        "valueMap": {
+          "synthetic_option_0": "001",
+          "synthetic_option_1": "002",
+          "synthetic_option_2": "003",
+          "synthetic_option_3": "004",
+          "synthetic_option_4": "005"
+        }
+      },
+      {
+        "source": "synthetic_field_25",
+        "target": "/GSynthetic078/*/GSynthetic070/FSynthetic011/*"
+      },
+      {
+        "source": "synthetic_field_26",
+        "target": "/GSynthetic078/*/GSynthetic070/FSynthetic051"
+      },
+      {
+        "source": "synthetic_field_27",
+        "target": "/GSynthetic078/*/GSynthetic070/FSynthetic052"
+      },
+      {
+        "source": "synthetic_field_28",
+        "target": "/GSynthetic078/*/GSynthetic070/GSynthetic090/FSynthetic054",
+        "valueMap": {
+          "synthetic_integer": 1
+        }
+      },
+      {
+        "source": "synthetic_field_29",
+        "target": "/GSynthetic078/*/GSynthetic070/GSynthetic090/FSynthetic055",
+        "valueMap": {
+          "synthetic_integer": 1
+        }
+      },
+      {
+        "source": "synthetic_field_30",
+        "target": "/GSynthetic078/*/GSynthetic070/GSynthetic090/FSynthetic056",
+        "valueMap": {
+          "synthetic_integer": 1850
+        }
+      },
+      {
+        "source": "synthetic_field_31",
+        "target": "/GSynthetic078/*/GSynthetic070/GSynthetic094/FSynthetic066",
+        "valueMap": {
+          "synthetic_option_0": "001",
+          "synthetic_option_1": "002"
+        }
+      },
+      {
+        "source": "synthetic_field_32",
+        "target": "/GSynthetic078/*/GSynthetic070/GSynthetic094/GSynthetic093/GSynthetic091/FSynthetic060"
+      },
+      {
+        "source": "synthetic_field_33",
+        "target": "/GSynthetic078/*/GSynthetic070/GSynthetic094/GSynthetic093/GSynthetic091/FSynthetic061"
+      },
+      {
+        "source": "synthetic_field_34",
+        "target": "/GSynthetic078/*/GSynthetic070/GSynthetic094/GSynthetic093/GSynthetic091/FSynthetic062"
+      },
+      {
+        "source": "synthetic_field_35",
+        "target": "/GSynthetic078/*/GSynthetic070/GSynthetic094/GSynthetic093/GSynthetic091/FSynthetic063"
+      },
+      {
+        "source": "synthetic_field_36",
+        "target": "/GSynthetic078/*/GSynthetic070/GSynthetic094/GSynthetic093/GSynthetic091/FSynthetic064"
+      },
+      {
+        "source": "synthetic_field_37",
+        "target": "/GSynthetic078/*/GSynthetic070/GSynthetic094/GSynthetic093/GSynthetic092/FSynthetic062"
+      },
+      {
+        "source": "synthetic_field_38",
+        "target": "/GSynthetic078/*/GSynthetic070/GSynthetic094/GSynthetic093/GSynthetic092/FSynthetic063"
+      },
+      {
+        "source": "synthetic_field_39",
+        "target": "/GSynthetic078/*/GSynthetic070/GSynthetic094/GSynthetic093/GSynthetic092/FSynthetic065"
+      },
+      {
+        "source": "synthetic_field_42",
+        "target": "/GSynthetic078/*/GSynthetic071/FSynthetic004",
+        "valueMap": {
+          "synthetic_option_0": "001",
+          "synthetic_option_1": "002",
+          "synthetic_option_2": "003",
+          "synthetic_option_3": "004",
+          "synthetic_option_4": "005",
+          "synthetic_option_5": "006",
+          "synthetic_option_6": "007",
+          "synthetic_option_7": "008",
+          "synthetic_option_8": "999"
+        }
+      },
+      {
+        "source": "synthetic_field_43",
+        "target": "/GSynthetic078/*/GSynthetic071/FSynthetic031"
+      },
+      {
+        "source": "synthetic_field_44",
+        "target": "/GSynthetic078/*/GSynthetic071/GSynthetic072/FSynthetic017",
+        "valueMap": {
+          "synthetic_option_0": "001",
+          "synthetic_option_1": "002"
+        }
+      },
+      {
+        "source": "synthetic_field_45",
+        "target": "/GSynthetic078/*/GSynthetic071/GSynthetic072/FSynthetic018"
+      },
+      {
+        "source": "synthetic_field_46",
+        "target": "/GSynthetic078/*/GSynthetic071/GSynthetic072/FSynthetic019"
+      },
+      {
+        "source": "synthetic_field_47",
+        "target": "/GSynthetic078/*/GSynthetic071/GSynthetic072/FSynthetic020"
+      },
+      {
+        "source": "synthetic_field_48",
+        "target": "/GSynthetic078/*/GSynthetic071/GSynthetic079/*/FSynthetic049"
+      },
+      {
+        "source": "synthetic_field_49",
+        "target": "/GSynthetic078/*/GSynthetic071/GSynthetic079/*/FSynthetic050"
+      },
+      {
+        "source": "synthetic_field_50",
+        "target": "/GSynthetic078/*/GSynthetic073/FSynthetic005"
+      },
+      {
+        "source": "synthetic_field_51",
+        "target": "/GSynthetic078/*/GSynthetic073/FSynthetic006"
+      },
+      {
+        "source": "synthetic_field_52",
+        "target": "/GSynthetic078/*/GSynthetic073/FSynthetic007"
+      },
+      {
+        "source": "synthetic_field_53",
+        "target": "/GSynthetic078/*/GSynthetic073/FSynthetic042"
+      },
+      {
+        "source": "synthetic_field_54",
+        "target": "/GSynthetic078/*/GSynthetic073/FSynthetic043"
+      },
+      {
+        "source": "synthetic_field_55",
+        "target": "/GSynthetic078/*/GSynthetic073/FSynthetic044"
+      },
+      {
+        "source": "synthetic_field_56",
+        "target": "/GSynthetic078/*/GSynthetic073/FSynthetic045"
+      },
+      {
+        "source": "synthetic_field_57",
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic081/FSynthetic012/*"
+      },
+      {
+        "source": "synthetic_field_58",
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic081/FSynthetic037/*"
+      },
+      {
+        "source": "synthetic_field_59",
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic081/FSynthetic038/*"
+      },
+      {
+        "source": "synthetic_field_60",
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic082/FSynthetic002"
+      },
+      {
+        "source": "synthetic_field_61",
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic082/FSynthetic013/*"
+      },
+      {
+        "source": "synthetic_field_62",
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic082/FSynthetic015",
+        "valueMap": {
+          "synthetic_option_0": "001",
+          "synthetic_option_1": "002",
+          "synthetic_option_2": "003",
+          "synthetic_option_3": "004"
+        }
+      },
+      {
+        "source": "synthetic_field_63",
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic082/FSynthetic016"
+      },
+      {
+        "source": "synthetic_field_64",
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic082/FSynthetic032/*"
+      },
+      {
+        "source": "synthetic_field_65",
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic082/FSynthetic036/*"
+      },
+      {
+        "source": "synthetic_field_66",
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic082/FSynthetic067/*"
+      },
+      {
+        "source": "synthetic_field_67",
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic083/FSynthetic014/*"
+      },
+      {
+        "source": "synthetic_field_68",
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic083/FSynthetic033/*"
+      },
+      {
+        "source": "synthetic_field_69",
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic083/FSynthetic036/*"
+      },
+      {
+        "source": "synthetic_field_70",
+        "target": "/GSynthetic078/*/GSynthetic074/FSynthetic021"
+      },
+      {
+        "source": "synthetic_field_71",
+        "target": "/GSynthetic078/*/GSynthetic074/FSynthetic022"
+      },
+      {
+        "source": "synthetic_field_72",
+        "target": "/GSynthetic078/*/GSynthetic074/FSynthetic023"
+      },
+      {
+        "source": "synthetic_field_73",
+        "target": "/GSynthetic078/*/GSynthetic074/FSynthetic024"
+      },
+      {
+        "source": "synthetic_field_74",
+        "target": "/GSynthetic078/*/GSynthetic074/FSynthetic025"
+      },
+      {
+        "source": "synthetic_field_75",
+        "target": "/GSynthetic078/*/GSynthetic074/FSynthetic035/*"
+      },
+      {
+        "source": "synthetic_field_76",
+        "target": "/GSynthetic078/*/GSynthetic074/FSynthetic039/*"
+      },
+      {
+        "source": "synthetic_field_77",
+        "target": "/GSynthetic078/*/GSynthetic074/FSynthetic041/*"
+      },
+      {
+        "source": "synthetic_field_78",
+        "target": "/GSynthetic078/*/GSynthetic075/FSynthetic028",
+        "valueMap": {
+          "synthetic_option_0": "001",
+          "synthetic_option_1": "002",
+          "synthetic_option_2": "003",
+          "synthetic_option_3": "004",
+          "synthetic_option_4": "005",
+          "synthetic_option_5": "006",
+          "synthetic_option_6": "007"
+        }
+      },
+      {
+        "source": "synthetic_field_79",
+        "target": "/GSynthetic078/*/GSynthetic075/FSynthetic029"
+      },
+      {
+        "source": "synthetic_field_80",
+        "target": "/GSynthetic078/*/GSynthetic075/FSynthetic030/*"
+      },
+      {
+        "source": "synthetic_field_81",
+        "target": "/GSynthetic078/*/GSynthetic075/FSynthetic040/*"
+      },
+      {
+        "source": "synthetic_field_82",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic076/FSynthetic001"
+      },
+      {
+        "source": "synthetic_field_83",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic076/FSynthetic026",
+        "valueMap": {
+          "synthetic_option_0": "001",
+          "synthetic_option_1": "002",
+          "synthetic_option_2": "003",
+          "synthetic_option_3": "004"
+        }
+      },
+      {
+        "source": "synthetic_field_84",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic076/FSynthetic027"
+      },
+      {
+        "source": "synthetic_field_85",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic076/GSynthetic085/FSynthetic068"
+      },
+      {
+        "source": "synthetic_field_86",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic076/GSynthetic085/GSynthetic084/FSynthetic034"
+      },
+      {
+        "source": "synthetic_field_87",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic076/GSynthetic085/GSynthetic084/FSynthetic046"
+      },
+      {
+        "source": "synthetic_field_88",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic076/GSynthetic085/GSynthetic084/FSynthetic057"
+      },
+      {
+        "source": "synthetic_field_89",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic076/GSynthetic085/GSynthetic084/FSynthetic058"
+      },
+      {
+        "source": "synthetic_field_90",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic076/GSynthetic085/GSynthetic091/FSynthetic060"
+      },
+      {
+        "source": "synthetic_field_91",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic076/GSynthetic085/GSynthetic091/FSynthetic061"
+      },
+      {
+        "source": "synthetic_field_92",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic076/GSynthetic085/GSynthetic091/FSynthetic062"
+      },
+      {
+        "source": "synthetic_field_93",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic076/GSynthetic085/GSynthetic091/FSynthetic063"
+      },
+      {
+        "source": "synthetic_field_94",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic076/GSynthetic085/GSynthetic091/FSynthetic064"
+      },
+      {
+        "source": "synthetic_field_95",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic077/FSynthetic001"
+      },
+      {
+        "source": "synthetic_field_96",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic077/FSynthetic026",
+        "valueMap": {
+          "synthetic_option_0": "001",
+          "synthetic_option_1": "002",
+          "synthetic_option_2": "003",
+          "synthetic_option_3": "004"
+        }
+      },
+      {
+        "source": "synthetic_field_97",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic077/FSynthetic027"
+      },
+      {
+        "source": "synthetic_field_98",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic077/GSynthetic085/FSynthetic068"
+      },
+      {
+        "source": "synthetic_field_99",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic077/GSynthetic085/GSynthetic084/FSynthetic034"
+      },
+      {
+        "source": "synthetic_field_100",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic077/GSynthetic085/GSynthetic084/FSynthetic046"
+      },
+      {
+        "source": "synthetic_field_101",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic077/GSynthetic085/GSynthetic084/FSynthetic057"
+      },
+      {
+        "source": "synthetic_field_102",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic077/GSynthetic085/GSynthetic084/FSynthetic058"
+      },
+      {
+        "source": "synthetic_field_103",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic077/GSynthetic085/GSynthetic091/FSynthetic060"
+      },
+      {
+        "source": "synthetic_field_104",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic077/GSynthetic085/GSynthetic091/FSynthetic061"
+      },
+      {
+        "source": "synthetic_field_105",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic077/GSynthetic085/GSynthetic091/FSynthetic062"
+      },
+      {
+        "source": "synthetic_field_106",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic077/GSynthetic085/GSynthetic091/FSynthetic063"
+      },
+      {
+        "source": "synthetic_field_107",
+        "target": "/GSynthetic078/*/GSynthetic075/GSynthetic077/GSynthetic085/GSynthetic091/FSynthetic064"
+      }
+    ],
+    "occurrences": [
+      {
+        "target": "/GSynthetic078",
+        "mode": "single"
+      },
+      {
+        "target": "/GSynthetic078/*/GSynthetic070/FSynthetic010",
+        "mode": "single"
+      },
+      {
+        "target": "/GSynthetic078/*/GSynthetic070/FSynthetic011",
+        "mode": "single"
+      },
+      {
+        "target": "/GSynthetic078/*/GSynthetic071/GSynthetic079",
+        "mode": "single"
+      },
+      {
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic081/FSynthetic012",
+        "mode": "single"
+      },
+      {
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic081/FSynthetic037",
+        "mode": "single"
+      },
+      {
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic081/FSynthetic038",
+        "mode": "single"
+      },
+      {
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic082/FSynthetic013",
+        "mode": "single"
+      },
+      {
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic082/FSynthetic032",
+        "mode": "single"
+      },
+      {
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic082/FSynthetic036",
+        "mode": "single"
+      },
+      {
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic082/FSynthetic067",
+        "mode": "single"
+      },
+      {
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic083/FSynthetic014",
+        "mode": "single"
+      },
+      {
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic083/FSynthetic033",
+        "mode": "single"
+      },
+      {
+        "target": "/GSynthetic078/*/GSynthetic073/GSynthetic083/FSynthetic036",
+        "mode": "single"
+      },
+      {
+        "target": "/GSynthetic078/*/GSynthetic074/FSynthetic035",
+        "mode": "single"
+      },
+      {
+        "target": "/GSynthetic078/*/GSynthetic074/FSynthetic039",
+        "mode": "single"
+      },
+      {
+        "target": "/GSynthetic078/*/GSynthetic074/FSynthetic041",
+        "mode": "single"
+      },
+      {
+        "target": "/GSynthetic078/*/GSynthetic075/FSynthetic030",
+        "mode": "single"
+      },
+      {
+        "target": "/GSynthetic078/*/GSynthetic075/FSynthetic040",
+        "mode": "single"
+      }
+    ]
+  }
+}

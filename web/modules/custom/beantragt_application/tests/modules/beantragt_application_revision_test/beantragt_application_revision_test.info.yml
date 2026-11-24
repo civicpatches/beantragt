@@ -1,0 +1,7 @@
+name: Application revision lifecycle test
+type: module
+description: 'Adds a revisionable probe field to observe the application save lifecycle in kernel tests.'
+package: Testing
+core_version_requirement: ^11
+dependencies:
+  - beantragt_application:beantragt_application

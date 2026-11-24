@@ -1,0 +1,201 @@
+beantragt_content.public_pages:
+  path: '/api/v1/jurisdictions/{slug}/pages'
+  defaults:
+    _controller: '\Drupal\beantragt_content\Controller\ContentPageController::listPages'
+    _format: json
+  requirements:
+    # Public content: published pages of a published jurisdiction only.
+    _access: 'TRUE'
+    slug: '(?=.*[a-z])[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?'
+  methods: [GET]
+  options:
+    _format: json
+
+beantragt_content.public_page:
+  path: '/api/v1/jurisdictions/{slug}/pages/{page_key}'
+  defaults:
+    _controller: '\Drupal\beantragt_content\Controller\ContentPageController::getPage'
+    _format: json
+  requirements:
+    # Public content: published pages of a published jurisdiction only.
+    _access: 'TRUE'
+    slug: '(?=.*[a-z])[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?'
+    page_key: '[a-z0-9](?:[a-z0-9_-]{0,126}[a-z0-9])?'
+  methods: [GET]
+  options:
+    _format: json
+
+beantragt_content.public_documents:
+  path: '/api/v1/jurisdictions/{slug}/documents'
+  defaults:
+    _controller: '\Drupal\beantragt_content\Controller\PublicDocumentController::listDocuments'
+    _format: json
+  requirements:
+    # Public content of a published jurisdiction, flood-limited in the controller.
+    _access: 'TRUE'
+    slug: '(?=.*[a-z])[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?'
+  methods: [GET]
+  options:
+    _format: json
+
+beantragt_content.public_sections:
+  path: '/api/v1/jurisdictions/{slug}/sections'
+  defaults:
+    _controller: '\Drupal\beantragt_content\Controller\PublicContentSectionController::listSections'
+    _format: json
+  requirements:
+    # Public content of a published jurisdiction, flood-limited in the controller.
+    _access: 'TRUE'
+    slug: '(?=.*[a-z])[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?'
+  methods: [GET]
+  options:
+    _format: json
+
+beantragt_content.public_document_download:
+  path: '/api/v1/jurisdictions/{slug}/documents/{document_uuid}/file'
+  defaults:
+    _controller: '\Drupal\beantragt_content\Controller\PublicDocumentController::downloadDocument'
+  requirements:
+    # Public document of a published jurisdiction, flood-limited in the controller.
+    _access: 'TRUE'
+    slug: '(?=.*[a-z])[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?'
+    document_uuid: '[0-9a-f-]{36}'
+  methods: [GET]
+
+beantragt_content.admin_boilerplates:
+  path: '/api/admin/jurisdictions/{jurisdiction_id}/boilerplates'
+  defaults:
+    _controller: '\Drupal\beantragt_content\Controller\BoilerplateController::listBoilerplates'
+    _format: json
+  requirements:
+    _custom_access: '\Drupal\beantragt_content\Controller\BoilerplateController::accessCheck'
+    jurisdiction_id: '[a-z0-9-]+'
+  methods: [GET]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_content.admin_content:
+  path: '/api/admin/jurisdictions/{jurisdiction_id}/content'
+  defaults:
+    _controller: '\Drupal\beantragt_content\Controller\AdminContentController::listContent'
+    _format: json
+  requirements:
+    _custom_access: '\Drupal\beantragt_content\Controller\AdminContentController::accessCheck'
+    jurisdiction_id: '[a-z0-9-]+'
+  methods: [GET]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_content.admin_content_create:
+  path: '/api/admin/jurisdictions/{jurisdiction_id}/content'
+  defaults:
+    _controller: '\Drupal\beantragt_content\Controller\AdminContentController::createContent'
+    _format: json
+  requirements:
+    _custom_access: '\Drupal\beantragt_content\Controller\AdminContentController::accessCheck'
+    _csrf_request_header_token: 'TRUE'
+    jurisdiction_id: '[a-z0-9-]+'
+  methods: [POST]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_content.admin_content_update:
+  path: '/api/admin/jurisdictions/{jurisdiction_id}/content/{content_uuid}'
+  defaults:
+    _controller: '\Drupal\beantragt_content\Controller\AdminContentController::updateContent'
+    _format: json
+  requirements:
+    _custom_access: '\Drupal\beantragt_content\Controller\AdminContentController::accessCheck'
+    _csrf_request_header_token: 'TRUE'
+    jurisdiction_id: '[a-z0-9-]+'
+    content_uuid: '[0-9a-f-]{36}'
+  methods: [PATCH]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_content.admin_documents:
+  path: '/api/admin/jurisdictions/{jurisdiction_id}/documents'
+  defaults:
+    _controller: '\Drupal\beantragt_content\Controller\AdminPublicDocumentController::listDocuments'
+    _format: json
+  requirements:
+    _custom_access: '\Drupal\beantragt_content\Controller\AdminPublicDocumentController::accessCheck'
+    jurisdiction_id: '[a-z0-9-]+'
+  methods: [GET]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_content.admin_documents_create:
+  path: '/api/admin/jurisdictions/{jurisdiction_id}/documents'
+  defaults:
+    _controller: '\Drupal\beantragt_content\Controller\AdminPublicDocumentController::createDocument'
+    _format: json
+  requirements:
+    _custom_access: '\Drupal\beantragt_content\Controller\AdminPublicDocumentController::accessCheck'
+    _csrf_request_header_token: 'TRUE'
+    jurisdiction_id: '[a-z0-9-]+'
+  methods: [POST]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_content.admin_documents_file:
+  path: '/api/admin/jurisdictions/{jurisdiction_id}/documents/{document_uuid}/file'
+  defaults:
+    _controller: '\Drupal\beantragt_content\Controller\AdminPublicDocumentController::downloadDocumentFile'
+  requirements:
+    _custom_access: '\Drupal\beantragt_content\Controller\AdminPublicDocumentController::accessCheck'
+    jurisdiction_id: '[a-z0-9-]+'
+    document_uuid: '[0-9a-f-]{36}'
+  methods: [GET]
+  options:
+    _auth: ['cookie']
+
+beantragt_content.admin_documents_update:
+  path: '/api/admin/jurisdictions/{jurisdiction_id}/documents/{document_uuid}'
+  defaults:
+    _controller: '\Drupal\beantragt_content\Controller\AdminPublicDocumentController::updateDocument'
+    _format: json
+  requirements:
+    _custom_access: '\Drupal\beantragt_content\Controller\AdminPublicDocumentController::accessCheck'
+    _csrf_request_header_token: 'TRUE'
+    jurisdiction_id: '[a-z0-9-]+'
+    document_uuid: '[0-9a-f-]{36}'
+  methods: [PATCH]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_content.admin_documents_status:
+  path: '/api/admin/jurisdictions/{jurisdiction_id}/documents/{document_uuid}'
+  defaults:
+    _controller: '\Drupal\beantragt_content\Controller\AdminPublicDocumentController::documentStatus'
+    _format: json
+  requirements:
+    _custom_access: '\Drupal\beantragt_content\Controller\AdminPublicDocumentController::accessCheck'
+    jurisdiction_id: '[a-z0-9-]+'
+    document_uuid: '[0-9a-f-]{36}'
+  methods: [GET]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_content.admin_documents_delete:
+  path: '/api/admin/jurisdictions/{jurisdiction_id}/documents/{document_uuid}'
+  defaults:
+    _controller: '\Drupal\beantragt_content\Controller\AdminPublicDocumentController::deleteDocument'
+    _format: json
+  requirements:
+    _custom_access: '\Drupal\beantragt_content\Controller\AdminPublicDocumentController::accessCheck'
+    _csrf_request_header_token: 'TRUE'
+    jurisdiction_id: '[a-z0-9-]+'
+    document_uuid: '[0-9a-f-]{36}'
+  methods: [DELETE]
+  options:
+    _format: json
+    _auth: ['cookie']

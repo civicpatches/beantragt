@@ -1,0 +1,26 @@
+<?php
+
+/**
+ * @file
+ * Hook implementations for beantragt_sso.
+ */
+
+declare(strict_types=1);
+
+use Drupal\user\UserInterface;
+
+/**
+ * Implements hook_ENTITY_TYPE_delete() for user entities.
+ *
+ * Deletes identity data with the account, including during citizen erasure.
+ * Only upgrade quarantine retains disabled bindings on existing accounts.
+ */
+function beantragt_sso_user_delete(UserInterface $account): void {
+  $database = \Drupal::database();
+  if (!$database->schema()->tableExists('beantragt_sso_identities')) {
+    return;
+  }
+  $database->delete('beantragt_sso_identities')
+    ->condition('uid', (int) $account->id())
+    ->execute();
+}

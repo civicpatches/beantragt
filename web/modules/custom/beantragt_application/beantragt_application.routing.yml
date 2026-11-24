@@ -1,0 +1,531 @@
+beantragt_application.admin_data_update:
+  path: '/api/admin/applications/{application}/data'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationDataController::update'
+  requirements:
+    _permission: 'edit application data entities'
+    _entity_access: 'application.update'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationDataController::access'
+    _csrf_request_header_token: 'TRUE'
+  methods: [PATCH]
+  options:
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_application.admin_application_delete:
+  path: '/api/admin/applications/{application}'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationDataController::delete'
+  requirements:
+    _entity_access: 'application.delete'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationDataController::deleteAccess'
+    _csrf_request_header_token: 'TRUE'
+  methods: [DELETE]
+  options:
+    no_cache: TRUE
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_application.admin_application_attachment_download:
+  path: '/api/admin/applications/{application}/attachments/{attachment_uuid}/download'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationAttachmentApiController::downloadApplicationAttachment'
+  requirements:
+    _entity_access: 'application.view'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationDataController::protectedDataAccess'
+    attachment_uuid: '[0-9a-fA-F-]{36}'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_application.admin_application_attachment_derivative:
+  path: '/api/admin/applications/{application}/attachments/{attachment_uuid}/derivative'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationAttachmentApiController::downloadApplicationAttachmentDerivative'
+  requirements:
+    _entity_access: 'application.view'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationDataController::protectedDataAccess'
+    attachment_uuid: '[0-9a-fA-F-]{36}'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_application.admin_data_view:
+  path: '/api/admin/applications/{application}/data'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationDataController::view'
+  requirements:
+    _entity_access: 'application.view'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationDataController::protectedDataAccess'
+  methods: [GET]
+  options:
+    no_cache: TRUE
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_application.admin_status_update:
+  path: '/api/admin/applications/{application}/status'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationDataController::updateStatus'
+  requirements:
+    _permission: 'manage workflow transitions'
+    _entity_access: 'application.update'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationDataController::statusAccess'
+    _csrf_request_header_token: 'TRUE'
+  methods: [PATCH]
+  options:
+    no_cache: TRUE
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_application.admin_deadline_update:
+  path: '/api/admin/applications/{application}/deadline'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationDataController::updateDeadline'
+  requirements:
+    _permission: 'manage workflow transitions'
+    _entity_access: 'application.update'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationDataController::statusAccess'
+    _csrf_request_header_token: 'TRUE'
+  methods: [PATCH]
+  options:
+    no_cache: TRUE
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_application.admin_status_rollback_target:
+  path: '/api/admin/applications/{application}/status-rollback-target'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationDataController::statusRollbackTarget'
+  requirements:
+    _permission: 'manage workflow transitions'
+    _entity_access: 'application.update'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationDataController::statusAccess'
+  methods: [GET]
+  options:
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_application.admin_status_rollback:
+  path: '/api/admin/applications/{application}/status-rollback'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationDataController::rollbackStatus'
+  requirements:
+    _permission: 'manage workflow transitions'
+    _entity_access: 'application.update'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationDataController::statusAccess'
+    _csrf_request_header_token: 'TRUE'
+  methods: [PATCH]
+  options:
+    parameters:
+      application:
+        type: entity:application
+
+# Internal: Nuxt proxy only, not part of /api/v1 and therefore not in
+# the OpenAPI contract. Staff only: the owning citizen passes
+# application.view, so workflowAccess() adds the staff scope check.
+beantragt_application.admin_workflow:
+  path: '/api/admin/applications/{application}/workflow'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationDataController::workflow'
+  requirements:
+    _entity_access: 'application.view'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationDataController::workflowAccess'
+  methods: [GET]
+  options:
+    no_cache: TRUE
+    parameters:
+      application:
+        type: entity:application
+
+# Internal: Nuxt proxy only, not part of /api/v1. Sets a valid status
+# for an application whose status left the current workflow; same guards as
+# the rollback.
+beantragt_application.admin_status_correction:
+  path: '/api/admin/applications/{application}/status-correction'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationDataController::correctStatus'
+  requirements:
+    _permission: 'manage workflow transitions'
+    _entity_access: 'application.update'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationDataController::statusAccess'
+    _csrf_request_header_token: 'TRUE'
+  methods: [PATCH]
+  options:
+    no_cache: TRUE
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_application.admin_assignment_candidates:
+  path: '/api/admin/applications/{application}/assignees'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationAssignmentController::candidates'
+  requirements:
+    _permission: 'view workflow assignments'
+    _entity_access: 'application.view'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationAssignmentController::viewAccess'
+  methods: [GET]
+  options:
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_application.admin_assignment_update:
+  path: '/api/admin/applications/{application}/assignee'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationAssignmentController::assign'
+  requirements:
+    _permission: 'assign applications'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationAssignmentController::assignAccess'
+    _csrf_request_header_token: 'TRUE'
+  methods: [PATCH]
+  options:
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_application.admin_application_delegate:
+  path: '/api/admin/applications/{application}/delegate'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationAssignmentController::delegate'
+  requirements:
+    _permission: 'delegate applications'
+    _entity_access: 'application.update'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationAssignmentController::delegateAccess'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_application.citizen_applications:
+  path: '/api/citizen/applications'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\CitizenApplicationController::list'
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    _permission: 'view own application entities'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+
+beantragt_application.citizen_application:
+  path: '/api/citizen/applications/{application_uuid}'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\CitizenApplicationController::detail'
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    _permission: 'view own application entities'
+    application_uuid: '[0-9a-fA-F-]{36}'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+
+beantragt_application.api_v1_applications_create:
+  path: '/api/v1/applications'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\PublicApplicationApiController::createApplication'
+    _format: json
+  requirements:
+    # Public submission of published internet forms; flood, idempotency and auth mode checked in the controller.
+    _access: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_application.api_v1_applications_list:
+  path: '/api/v1/applications'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\CitizenApplicationController::listV1'
+    _format: json
+  requirements:
+    # Controller requires a logged-in citizen with own-application permission and workspace scope.
+    _access: 'TRUE'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    _auth:
+      - basic_auth
+      - cookie
+
+beantragt_application.api_v1_public_applications_confirm:
+  path: '/api/v1/public/applications/confirm'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\EmailConfirmationController::confirm'
+    _format: json
+  requirements:
+    # Email confirmation by single-use token, flood-limited per IP in the controller.
+    _access: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_application.api_v1_public_applications_confirm_resend:
+  path: '/api/v1/public/applications/confirm/resend'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\EmailConfirmationController::resend'
+    _format: json
+  requirements:
+    # Resend needs reference and email, flood-limited per IP and email in the controller.
+    _access: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_application.api_v1_application_detail:
+  path: '/api/v1/applications/{application_uuid}'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\CitizenApplicationController::detailV1'
+    _format: json
+  requirements:
+    # Controller requires a logged-in citizen with own-application permission and workspace scope.
+    _access: 'TRUE'
+    application_uuid: '[0-9a-fA-F-]{36}'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    _auth:
+      - basic_auth
+      - cookie
+
+beantragt_application.api_v1_staff_applications_list:
+  path: '/api/v1/staff/applications'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\StaffApplicationApiController::list'
+    _format: json
+  requirements:
+    # Controller requires an authenticated staff account allowed to view applications.
+    _access: 'TRUE'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    _auth:
+      - basic_auth
+      - cookie
+
+beantragt_application.api_v1_staff_application_counts:
+  path: '/api/v1/staff/applications/counts'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\StaffApplicationApiController::counts'
+    _format: json
+  requirements:
+    # Same staff profile and workspace checks as the staff list, in the controller.
+    _access: 'TRUE'
+  methods: [GET]
+  options:
+    # No no_cache: the response carries user, permission, application and
+    # membership cacheability. The dynamic page cache still declines it
+    # because of the user context, so every call is computed.
+    _format: json
+    _auth:
+      - basic_auth
+      - cookie
+
+beantragt_application.api_v1_staff_application_report:
+  path: '/api/v1/staff/applications/report'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\StaffApplicationApiController::report'
+    _format: json
+  requirements:
+    # Same staff profile and workspace checks as the staff list, in the controller.
+    _access: 'TRUE'
+  methods: [GET]
+  options:
+    _format: json
+    _auth:
+      - basic_auth
+      - cookie
+
+beantragt_application.api_v1_staff_application_detail:
+  path: '/api/v1/staff/applications/{application_uuid}'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\StaffApplicationApiController::detail'
+    _format: json
+  requirements:
+    # Controller requires a staff account allowed to view applications in the workspace scope.
+    _access: 'TRUE'
+    application_uuid: '[0-9a-fA-F-]{36}'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    _auth:
+      - basic_auth
+      - cookie
+
+beantragt_application.api_v1_attachments_create:
+  path: '/api/v1/attachments'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationAttachmentApiController::uploadAttachment'
+    _format: json
+  requirements:
+    # Upload for published forms, flood-limited; forms with required login need a trusted owner.
+    _access: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_application.api_v1_attachment_analysis_consent:
+  path: '/api/v1/attachments/{attachment_uuid}/analysis-consent'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationAttachmentApiController::consentAttachmentAnalysis'
+    _format: json
+  requirements:
+    # Controller requires the Nuxt service authorization header, a claim token and flood limits.
+    _access: 'TRUE'
+    attachment_uuid: '[0-9a-fA-F-]{36}'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_application.internal_attachment_analysis_update:
+  path: '/api/internal/attachments/{attachment_uuid}/analysis'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationAttachmentApiController::updateAttachmentAnalysis'
+    _format: json
+  requirements:
+    # Internal callback; controller requires the Nuxt service authorization header.
+    _access: 'TRUE'
+    attachment_uuid: '[0-9a-fA-F-]{36}'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_application.internal_attachment_analysis_source:
+  path: '/api/internal/attachments/{attachment_uuid}/analysis-source'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationAttachmentApiController::prepareCitizenAnalysisSource'
+    _format: json
+  requirements:
+    # Internal; controller requires the Nuxt service authorization header,
+    # the citizen's claim token and the run id of story A minted by the upload.
+    _access: 'TRUE'
+    attachment_uuid: '[0-9a-fA-F-]{36}'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_application.internal_attachment_citizen_analysis:
+  path: '/api/internal/attachments/{attachment_uuid}/citizen-analysis'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationAttachmentApiController::citizenAttachmentAnalysis'
+    _format: json
+  requirements:
+    # Internal; controller requires the Nuxt service authorization header and
+    # the citizen's claim token, and answers only the citizen reduction.
+    _access: 'TRUE'
+    attachment_uuid: '[0-9a-fA-F-]{36}'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_application.admin_application_attachment_analysis_rerun:
+  path: '/api/admin/applications/{application}/attachments/{attachment_uuid}/analysis/{story}'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationAttachmentApiController::rerunApplicationAttachmentAnalysis'
+    _format: json
+  requirements:
+    # Staff case scope. The controller checks protected fields before
+    # preparing the source in Drupal.
+    _entity_access: 'application.view'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationDataController::protectedDataAccess'
+    _csrf_request_header_token: 'TRUE'
+    attachment_uuid: '[0-9a-fA-F-]{36}'
+    story: 'legacy|citizen|staff'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+# Internal (Nuxt proxy /api/admin/applications/:id only, not /api/v1, no
+# OpenAPI, no Bruno). Rows may carry a "precheck" block of the batch
+# pre-check; stays no_cache/no-store.
+beantragt_application.admin_application_attachments:
+  path: '/api/admin/applications/{application}/attachments'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationAttachmentApiController::listApplicationAttachments'
+    _format: json
+  requirements:
+    _entity_access: 'application.view'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationDataController::protectedDataAccess'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_application.admin_application_attachment_delete_quarantined:
+  path: '/api/admin/applications/{application}/attachments/{attachment_uuid}'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\ApplicationAttachmentApiController::deleteQuarantinedApplicationAttachment'
+    _format: json
+  requirements:
+    _permission: 'manage quarantined application attachments'
+    _entity_access: 'application.update'
+    _custom_access: '\Drupal\beantragt_application\Controller\ApplicationDataController::protectedDataAccess'
+    _csrf_request_header_token: 'TRUE'
+    attachment_uuid: '[0-9a-fA-F-]{36}'
+  methods: [DELETE]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+# Internal Nitro counter projection. The controller enforces staff and scope.
+beantragt_application.internal_staff_application_events:
+  path: '/api/internal/staff/applications/{application_uuid}/events'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\StaffApplicationApiController::events'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    application_uuid: '[0-9a-fA-F-]{36}'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+
+beantragt_application.api_v1_staff_application_event_seen:
+  path: '/api/v1/staff/applications/{application_uuid}/events/{kind}/seen'
+  defaults:
+    _controller: '\Drupal\beantragt_application\Controller\StaffApplicationApiController::markEventSeen'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+    application_uuid: '[0-9a-fA-F-]{36}'
+    kind: '[a-z]+'
+  methods: [POST]
+  options:
+    no_cache: 'TRUE'

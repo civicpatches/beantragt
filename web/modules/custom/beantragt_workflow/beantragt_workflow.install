@@ -1,0 +1,124 @@
+<?php
+
+/**
+ * @file
+ * Install and uninstall functions for beantragt_workflow.
+ */
+
+declare(strict_types=1);
+
+/**
+ * Implements hook_install().
+ *
+ * Installs assignment base fields on the application entity type.
+ */
+function beantragt_workflow_install(): void {
+  foreach (['field_assigned_to', 'field_assigned_team'] as $field_name) {
+    _beantragt_workflow_install_assignment_field($field_name);
+  }
+
+  // Grant workflow permissions to service_account role.
+  $role_storage = \Drupal::entityTypeManager()->getStorage('user_role');
+  /** @var \Drupal\user\RoleInterface|null $serviceRole */
+  $serviceRole = $role_storage->load('service_account');
+  if ($serviceRole) {
+    $serviceRole->grantPermission('manage workflow transitions');
+    $serviceRole->save();
+    \Drupal::logger('beantragt_workflow')->info(
+      'Granted "manage workflow transitions" to service_account role.'
+    );
+  }
+}
+
+/**
+ * Implements hook_uninstall().
+ *
+ * Removes assignment base fields from application.
+ */
+function beantragt_workflow_uninstall(): void {
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  foreach (['field_assigned_team', 'field_assigned_to'] as $field_name) {
+    $field_storage = $update_manager->getFieldStorageDefinition($field_name, 'application');
+    if ($field_storage) {
+      $update_manager->uninstallFieldStorageDefinition($field_storage);
+      \Drupal::logger('beantragt_workflow')->info(
+        'Removed @field base field from application.',
+        ['@field' => $field_name],
+      );
+    }
+  }
+}
+
+/**
+ * Installs one workflow assignment base field if it is not stored yet.
+ */
+function _beantragt_workflow_install_assignment_field(string $field_name): bool {
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  $entity_type_id = 'application';
+  $entity_type = \Drupal::entityTypeManager()->getDefinition($entity_type_id, FALSE);
+
+  if ($entity_type === NULL) {
+    return FALSE;
+  }
+
+  $field_definitions = beantragt_workflow_entity_base_field_info($entity_type);
+  if (!isset($field_definitions[$field_name])) {
+    return FALSE;
+  }
+
+  $field_definitions[$field_name]->setName($field_name);
+  $field_definitions[$field_name]->setTargetEntityTypeId($entity_type_id);
+  if ($update_manager->getFieldStorageDefinition($field_name, $entity_type_id)) {
+    return FALSE;
+  }
+
+  $update_manager->installFieldStorageDefinition(
+    $field_name,
+    $entity_type_id,
+    'beantragt_workflow',
+    $field_definitions[$field_name]
+  );
+  \Drupal::logger('beantragt_workflow')->info(
+    'Installed @field base field on application.',
+    ['@field' => $field_name],
+  );
+  return TRUE;
+}
+
+/**
+ * Adds team assignment storage to existing application entities.
+ */
+function beantragt_workflow_update_10001(): string {
+  return _beantragt_workflow_install_assignment_field('field_assigned_team')
+    ? 'Installed field_assigned_team base field on application.'
+    : 'field_assigned_team base field already exists.';
+}
+
+/**
+ * Seeds resubmission reminder defaults for existing installations.
+ */
+function beantragt_workflow_update_10002(): string {
+  $config = \Drupal::configFactory()->getEditable('beantragt_workflow.settings');
+  $defaults = [
+    'resubmission_days' => 42,
+    'resubmission_scope' => 'org',
+    'resubmission_interval_days' => 7,
+    'resubmission_max_reminders' => 0,
+  ];
+  $updated = [];
+
+  foreach ($defaults as $key => $value) {
+    if ($config->get($key) !== NULL) {
+      continue;
+    }
+    $config->set($key, $value);
+    $updated[] = $key;
+  }
+
+  if ($updated !== []) {
+    $config->save();
+  }
+
+  return 'Seeded resubmission workflow settings: '
+    . ($updated === [] ? 'none' : implode(', ', $updated));
+}

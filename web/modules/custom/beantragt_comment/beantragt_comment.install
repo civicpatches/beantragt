@@ -1,0 +1,325 @@
+<?php
+
+/**
+ * @file
+ * Install and uninstall functions for beantragt_comment.
+ */
+
+declare(strict_types=1);
+
+use Drupal\Core\Config\StorableConfigBase;
+use Drupal\Core\Field\FieldStorageDefinitionInterface;
+use Drupal\user\RoleInterface;
+
+/**
+ * Implements hook_install().
+ *
+ * Grants default permissions to roles and adds comment mail templates
+ * to beantragt_notification config.
+ */
+function beantragt_comment_install(): void {
+  $role_storage = \Drupal::entityTypeManager()->getStorage('user_role');
+
+  // Grant permissions to authenticated users (citizens).
+  /** @var \Drupal\user\RoleInterface|null $authenticated */
+  $authenticated = $role_storage->load('authenticated');
+  if ($authenticated) {
+    $authenticated->grantPermission('create application_comment entities');
+    $authenticated->grantPermission('view application_comment entities');
+    // Messages on submitted applications stay with the authority, so
+    // citizens get no delete permission (see update 10005).
+    $authenticated->save();
+  }
+
+  // Grant permissions to service_account (Nuxt server proxy).
+  /** @var \Drupal\user\RoleInterface|null $service_account */
+  $service_account = $role_storage->load('service_account');
+  if ($service_account) {
+    $service_account->grantPermission('create application_comment entities');
+    $service_account->grantPermission('view application_comment entities');
+    $service_account->save();
+  }
+
+  _beantragt_comment_add_mail_templates();
+
+  // Enable comment notification templates in settings.
+  _beantragt_comment_enable_mail_templates();
+}
+
+/**
+ * Adds comment mail templates to beantragt_notification.mail config.
+ */
+function _beantragt_comment_add_mail_templates(): void {
+  $config = \Drupal::configFactory()->getEditable('beantragt_notification.mail');
+  $templates = _beantragt_comment_safe_mail_templates();
+
+  // Only add if not already present.
+  if ($config->get('application_comment_staff') === NULL) {
+    $config->set('application_comment_staff', $templates['application_comment_staff']);
+  }
+
+  if ($config->get('application_comment_citizen') === NULL) {
+    $config->set('application_comment_citizen', $templates['application_comment_citizen']);
+  }
+
+  $config->save();
+}
+
+/**
+ * Returns safe comment notification mail templates.
+ *
+ * Comment text and attachments stay in the authenticated case thread. Email
+ * notifications only announce that a message is waiting.
+ *
+ * @return array<string, array{subject: string, body: string}>
+ *   Template defaults keyed by notification template id.
+ */
+function _beantragt_comment_safe_mail_templates(): array {
+  if (function_exists('_beantragt_notification_comment_mail_templates')) {
+    return _beantragt_notification_comment_mail_templates();
+  }
+
+  return [
+    'application_comment_staff' => [
+      'subject' => 'Rückfrage zu Ihrem Antrag @reference_number',
+      'body' => "Guten Tag @full_name,\n\n"
+      . "zu Ihrem Antrag \"@form_title\" (Aktenzeichen: @reference_number) "
+      . "liegt eine Rückfrage vor.\n\n"
+      . "Bitte loggen Sie sich ein, um die Rückfrage im geschützten "
+      . "Bereich zu lesen und zu beantworten.\n\n"
+      . "@org_name",
+    ],
+    'application_comment_citizen' => [
+      'subject' => 'Antwort vom Bürger zu Antrag @reference_number',
+      'body' => "Zu Antrag \"@form_title\" (Aktenzeichen: @reference_number) "
+      . "ist eine Antwort eingegangen.\n\n"
+      . "Bitte prüfen Sie die Antwort zeitnah im geschützten "
+      . "Verwaltungsbereich.",
+    ],
+  ];
+}
+
+/**
+ * Removes free-text comment bodies from notification mail templates.
+ */
+function beantragt_comment_update_10002(): string {
+  $config = \Drupal::configFactory()->getEditable('beantragt_notification.mail');
+  $templates = _beantragt_comment_safe_mail_templates();
+  $updated = _beantragt_comment_scrub_mail_config($config, $templates, TRUE);
+
+  if (\Drupal::moduleHandler()->moduleExists('language')) {
+    /** @var \Drupal\language\Config\LanguageConfigFactoryOverrideInterface $language_config_override */
+    $language_config_override = \Drupal::service('language.config_factory_override');
+    foreach (array_keys(\Drupal::languageManager()->getLanguages()) as $langcode) {
+      $override = $language_config_override->getOverride(
+        $langcode,
+        'beantragt_notification.mail',
+      );
+      $override_updated = _beantragt_comment_scrub_mail_config($override, $templates);
+
+      foreach ($override_updated as $key) {
+        $updated[] = $langcode . ':' . $key;
+      }
+    }
+  }
+
+  return 'Removed comment body tokens from notification templates: '
+    . ($updated === [] ? 'none' : implode(', ', $updated));
+}
+
+/**
+ * Adds the comment visibility field for internal staff notes.
+ */
+function beantragt_comment_update_10003(): string {
+  $definition = \Drupal::entityTypeManager()
+    ->getDefinition('application_comment', FALSE);
+  if ($definition === NULL) {
+    return 'Skipped application_comment visibility field because the entity type is unavailable.';
+  }
+
+  $field_definitions = \Drupal::service('entity_field.manager')
+    ->getBaseFieldDefinitions('application_comment');
+  if (!isset($field_definitions['field_visibility'])) {
+    return 'Skipped application_comment visibility field because the base field definition is unavailable.';
+  }
+  $storage_definition = $field_definitions['field_visibility'];
+  if (!$storage_definition instanceof FieldStorageDefinitionInterface) {
+    return 'Skipped application_comment visibility field because the storage definition is unavailable.';
+  }
+
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  if ($update_manager->getFieldStorageDefinition('field_visibility', 'application_comment') !== NULL) {
+    return 'Application comment visibility field already exists.';
+  }
+
+  $update_manager->installFieldStorageDefinition(
+    'field_visibility',
+    'application_comment',
+    'beantragt_comment',
+    $storage_definition,
+  );
+
+  return 'Installed application_comment.field_visibility.';
+}
+
+/**
+ * Backfills public visibility for existing application comments.
+ */
+function beantragt_comment_update_10004(): string {
+  $schema = \Drupal::database()->schema();
+  if (!$schema->tableExists('application_comment')) {
+    return 'Skipped application_comment visibility backfill because the base table is unavailable.';
+  }
+  if (!$schema->fieldExists('application_comment', 'field_visibility')) {
+    return 'Skipped application_comment visibility backfill because the field is unavailable.';
+  }
+
+  $updated = \Drupal::database()
+    ->update('application_comment')
+    ->fields(['field_visibility' => 'public'])
+    ->isNull('field_visibility')
+    ->execute();
+
+  return sprintf('Backfilled public visibility on %d application comments.', $updated);
+}
+
+/**
+ * Revokes the citizen permission to delete own application messages.
+ *
+ * Messages on a submitted application belong to the record of the
+ * authority, like the application itself. Messages on unconfirmed
+ * submissions go together with the submission.
+ */
+function beantragt_comment_update_10005(): string {
+  $role = \Drupal::entityTypeManager()->getStorage('user_role')->load('authenticated');
+  if (!$role instanceof RoleInterface || !$role->hasPermission('delete own application_comment entities')) {
+    return 'The authenticated role does not hold "delete own application_comment entities".';
+  }
+  $role->revokePermission('delete own application_comment entities');
+  $role->save();
+  return 'Revoked "delete own application_comment entities" from the authenticated role.';
+}
+
+/**
+ * Removes comment-body tokens from one mail config object.
+ *
+ * @param \Drupal\Core\Config\StorableConfigBase $config
+ *   Editable config or language override object.
+ * @param array<string, array{subject: string, body: string}> $templates
+ *   Safe templates keyed by notification template id.
+ * @param bool $create_missing
+ *   Whether missing template keys should be created.
+ *
+ * @return string[]
+ *   Template ids updated in this config object.
+ */
+function _beantragt_comment_scrub_mail_config(
+  StorableConfigBase $config,
+  array $templates,
+  bool $create_missing = FALSE,
+): array {
+  $updated = [];
+
+  foreach ($templates as $key => $safe_template) {
+    $current = $config->get($key);
+    if (!is_array($current)) {
+      if ($create_missing) {
+        $config->set($key, $safe_template);
+        $updated[] = $key;
+      }
+      continue;
+    }
+
+    $scrubbed = _beantragt_comment_scrub_template_values($current, $safe_template);
+    if ($scrubbed !== NULL) {
+      $config->set($key, $scrubbed);
+      $updated[] = $key;
+    }
+  }
+
+  if ($updated !== []) {
+    $config->save();
+  }
+
+  return $updated;
+}
+
+/**
+ * Scrubs a single template value array.
+ *
+ * @param array<string, mixed> $current
+ *   Current template value.
+ * @param array{subject: string, body: string} $safe_template
+ *   Safe replacement template.
+ *
+ * @return array{subject: string, body: string}|null
+ *   Scrubbed template, or NULL when no change is needed.
+ */
+function _beantragt_comment_scrub_template_values(
+  array $current,
+  array $safe_template,
+): ?array {
+  $subject = (string) ($current['subject'] ?? '');
+  $body = (string) ($current['body'] ?? '');
+  $subject_contains_body_token = str_contains($subject, '@comment_body');
+  $body_contains_body_token = str_contains($body, '@comment_body');
+
+  if (!$subject_contains_body_token && !$body_contains_body_token) {
+    return NULL;
+  }
+
+  return [
+    'subject' => $subject_contains_body_token
+      ? $safe_template['subject']
+      : (string) ($current['subject'] ?? $safe_template['subject']),
+    'body' => $safe_template['body'],
+  ];
+}
+
+/**
+ * Enables comment notification templates in settings.
+ */
+function _beantragt_comment_enable_mail_templates(): void {
+  $config = \Drupal::configFactory()->getEditable('beantragt_notification.settings');
+  $config->set('enabled_templates.application_comment_staff', TRUE);
+  $config->set('enabled_templates.application_comment_citizen', TRUE);
+  $config->save();
+}
+
+/**
+ * Implements hook_uninstall().
+ *
+ * Cleans up the application_comment entity type and all stored entities.
+ */
+function beantragt_comment_uninstall(): void {
+  $storage = \Drupal::entityTypeManager()->getStorage('application_comment');
+  $entities = $storage->loadMultiple();
+  if (!empty($entities)) {
+    $storage->delete($entities);
+    \Drupal::logger('beantragt_comment')->info(
+      'Uninstall: deleted @count application comment entities.',
+      ['@count' => count($entities)]
+    );
+  }
+
+  // Revoke permissions from roles.
+  $role_storage = \Drupal::entityTypeManager()->getStorage('user_role');
+  $permissions = [
+    'create application_comment entities',
+    'view application_comment entities',
+    'delete own application_comment entities',
+    'delete any application_comment entities',
+    'administer application_comment entities',
+  ];
+
+  foreach (['authenticated', 'service_account'] as $role_id) {
+    /** @var \Drupal\user\RoleInterface|null $role */
+    $role = $role_storage->load($role_id);
+    if ($role) {
+      foreach ($permissions as $permission) {
+        $role->revokePermission($permission);
+      }
+      $role->save();
+    }
+  }
+}

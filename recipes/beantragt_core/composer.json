@@ -1,0 +1,6 @@
+{
+    "name": "markaspot/beantragt_core",
+    "description": "Beantragt Core: central entity-model recipe (form schema, application, workflow status, computed-field contract).",
+    "type": "drupal-recipe",
+    "license": "GPL-2.0-or-later"
+}

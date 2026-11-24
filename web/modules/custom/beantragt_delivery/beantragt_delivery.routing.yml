@@ -1,0 +1,820 @@
+beantragt_delivery.admin_application_deliveries:
+  path: '/api/admin/applications/{application}/deliveries'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\DeliveryController::listDeliveries'
+    _format: json
+  requirements:
+    _permission: 'manage application deliveries'
+    _entity_access: 'application.view'
+    _custom_access: '\Drupal\beantragt_delivery\Controller\DeliveryController::access'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_delivery.admin_application_delivery_mock:
+  path: '/api/admin/applications/{application}/deliveries/mock'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\DeliveryController::enqueueMock'
+    _format: json
+  requirements:
+    _permission: 'manage application deliveries'
+    _entity_access: 'application.update'
+    _custom_access: '\Drupal\beantragt_delivery\Controller\DeliveryController::access'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_delivery.local_webhook_receiver:
+  path: '/api/local/webhook-receiver'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\LocalWebhookReceiverController::receive'
+    _format: json
+  requirements:
+    # Test receiver: enabled only in dev and test environments, HMAC signature required.
+    _access: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.admin_delivery_settings:
+  path: '/api/admin/delivery/settings'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\DeliverySettingsController::get'
+    _format: json
+  requirements:
+    _permission: 'administer application delivery settings'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.admin_delivery_settings_update:
+  path: '/api/admin/delivery/settings'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\DeliverySettingsController::patch'
+    _format: json
+  requirements:
+    _permission: 'administer application delivery settings'
+    _csrf_request_header_token: 'TRUE'
+  methods: [PATCH]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.response_list:
+  path: '/api/applications/{application}/responses'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\ExternalResponseController::listResponses'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_delivery.response_download:
+  path: '/api/applications/{application}/responses/{response_id}/documents/{file_uuid}/download'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\ExternalResponseController::download'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_delivery.response_release:
+  path: '/api/applications/{application}/responses/{response_id}/release'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\ExternalResponseController::release'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_delivery.integration_connection_list:
+  path: '/api/admin/integrations/connections'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'connection'
+    integration_operation: 'list'
+  requirements:
+    _permission: 'administer integration connections'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_connection_create:
+  path: '/api/admin/integrations/connections'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'connection'
+    integration_operation: 'create'
+  requirements:
+    _permission: 'administer integration connections'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_connection_read:
+  path: '/api/admin/integrations/connections/{uuid}'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'connection'
+    integration_operation: 'read'
+  requirements:
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _permission: 'administer integration connections'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_connection_update:
+  path: '/api/admin/integrations/connections/{uuid}'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'connection'
+    integration_operation: 'update'
+  requirements:
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _permission: 'administer integration connections'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  methods: [PATCH]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_connection_presentation:
+  path: '/api/admin/integrations/connections/{uuid}/presentation'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'connection'
+    integration_operation: 'presentation'
+  requirements:
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _permission: 'administer integration connections'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  methods: [PATCH]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_connection_activate:
+  path: '/api/admin/integrations/connections/{uuid}/activate'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'connection'
+    integration_operation: 'activate'
+  requirements:
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _permission: 'administer integration connections'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_connection_disable:
+  path: '/api/admin/integrations/connections/{uuid}/disable'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'connection'
+    integration_operation: 'disable'
+  requirements:
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _permission: 'administer integration connections'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_connection_check:
+  path: '/api/admin/integrations/connections/{uuid}/check'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'connection'
+    integration_operation: 'check'
+  requirements:
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _permission: 'administer integration connections'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_mapping_list:
+  path: '/api/admin/integrations/mappings'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'mapping'
+    integration_operation: 'list'
+  requirements:
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_mapping_create:
+  path: '/api/admin/integrations/mappings'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'mapping'
+    integration_operation: 'create'
+  requirements:
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_mapping_read:
+  path: '/api/admin/integrations/mappings/{uuid}'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'mapping'
+    integration_operation: 'read'
+  requirements:
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_mapping_create_version:
+  path: '/api/admin/integrations/mappings/{uuid}/versions'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'mapping'
+    integration_operation: 'create_version'
+  requirements:
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_mapping_update_version:
+  path: '/api/admin/integrations/mappings/{uuid}/versions/{version}'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'mapping'
+    integration_operation: 'update_version'
+  requirements:
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+    version: '[1-9][0-9]{0,8}'
+  methods: [PATCH]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_mapping_activate:
+  path: '/api/admin/integrations/mappings/{uuid}/versions/{version}/activate'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'mapping'
+    integration_operation: 'activate'
+  requirements:
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+    version: '[1-9][0-9]{0,8}'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_mapping_retire:
+  path: '/api/admin/integrations/mappings/{uuid}/versions/{version}/retire'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'mapping'
+    integration_operation: 'retire'
+  requirements:
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+    version: '[1-9][0-9]{0,8}'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_assignment_list:
+  path: '/api/admin/integrations/assignments'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'assignment'
+    integration_operation: 'list'
+  requirements:
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_assignment_create:
+  path: '/api/admin/integrations/assignments'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'assignment'
+    integration_operation: 'create'
+  requirements:
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_assignment_read:
+  path: '/api/admin/integrations/assignments/{uuid}'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'assignment'
+    integration_operation: 'read'
+  requirements:
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_assignment_update:
+  path: '/api/admin/integrations/assignments/{uuid}'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'assignment'
+    integration_operation: 'update'
+  requirements:
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  methods: [PATCH]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_assignment_coupling:
+  path: '/api/admin/integrations/assignments/{uuid}/coupling'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'assignment'
+    integration_operation: 'coupling'
+  requirements:
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  methods: [PATCH]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_assignment_activate:
+  path: '/api/admin/integrations/assignments/{uuid}/activate'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'assignment'
+    integration_operation: 'activate'
+  requirements:
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_assignment_deactivate:
+  path: '/api/admin/integrations/assignments/{uuid}/deactivate'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'assignment'
+    integration_operation: 'deactivate'
+  requirements:
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_contracts:
+  path: '/api/admin/integrations/contracts'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'contract'
+    integration_operation: 'contracts'
+  requirements:
+    _permission: 'administer integration connections+administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_contract_paths:
+  path: '/api/admin/integrations/contracts/{key}/{contract_version}/paths'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'contract'
+    integration_operation: 'paths'
+  requirements:
+    key: '[A-Za-z0-9][A-Za-z0-9:_.-]{0,127}'
+    contract_version: '[A-Za-z0-9][A-Za-z0-9_.-]{0,31}'
+    _permission: 'administer integration connections+administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_profiles:
+  path: '/api/admin/integrations/credential-profiles'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'profile'
+    integration_operation: 'profiles'
+  requirements:
+    _permission: 'administer integration connections'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_mapping_read_version:
+  path: '/api/admin/integrations/mappings/{uuid}/versions/{version}'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'mapping'
+    integration_operation: 'read_version'
+  requirements:
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    version: '[1-9][0-9]{0,8}'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_mapping_check_version:
+  path: '/api/admin/integrations/mappings/{uuid}/versions/{version}/check'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'mapping'
+    integration_operation: 'check_version'
+  requirements:
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    version: '[1-9][0-9]{0,8}'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_mapping_compatibility:
+  path: '/api/admin/integrations/mappings/{uuid}/versions/{version}/compatibility/{revision_id}'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'mapping'
+    integration_operation: 'compatibility'
+  requirements:
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    version: '[1-9][0-9]{0,8}'
+    revision_id: '[1-9][0-9]{0,9}'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_form_schema_list:
+  path: '/api/admin/integrations/form-schemas'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'form_schema'
+    integration_operation: 'forms'
+  requirements:
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_form_schema_fields:
+  path: '/api/admin/integrations/form-schemas/{uuid}/revisions/{revision_id}/fields'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'form_schema'
+    integration_operation: 'fields'
+  requirements:
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    revision_id: '[1-9][0-9]{0,9}'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_assignment_replace:
+  path: '/api/admin/integrations/assignments/{uuid}/replace'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'assignment'
+    integration_operation: 'replace'
+  requirements:
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.integration_assignment_adopt_revision:
+  path: '/api/admin/integrations/assignments/{uuid}/adopt-revision'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\IntegrationController::handle'
+    _format: json
+    integration_resource: 'assignment'
+    integration_operation: 'adopt_revision'
+  requirements:
+    _permission: 'administer integration mappings'
+    _user_is_logged_in: 'TRUE'
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+
+beantragt_delivery.transfer_list:
+  path: '/api/admin/applications/{application}/transfers'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\TransferController::listTransfers'
+    _format: json
+  requirements:
+    _permission: 'manage application deliveries+approve application dispatch'
+    _entity_access: 'application.view'
+    _custom_access: '\Drupal\beantragt_delivery\Controller\TransferController::access'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_delivery.transfer_approve:
+  path: '/api/admin/applications/{application}/transfers/{uuid}/approve-dispatch'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\TransferController::approveDispatch'
+    _format: json
+  requirements:
+    _permission: 'approve application dispatch'
+    _entity_access: 'application.update'
+    _custom_access: '\Drupal\beantragt_delivery\Controller\TransferController::access'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_delivery.transfer_retry:
+  path: '/api/admin/applications/{application}/transfers/{uuid}/retry'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\TransferController::retry'
+    _format: json
+  requirements:
+    _permission: 'approve application dispatch'
+    _entity_access: 'application.update'
+    _custom_access: '\Drupal\beantragt_delivery\Controller\TransferController::access'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_delivery.transfer_resume:
+  path: '/api/admin/applications/{application}/transfers/{uuid}/resume'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\TransferController::resume'
+    _format: json
+  requirements:
+    _permission: 'approve application dispatch'
+    _entity_access: 'application.update'
+    _custom_access: '\Drupal\beantragt_delivery\Controller\TransferController::access'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_delivery.transfer_replan:
+  path: '/api/admin/applications/{application}/transfers/{uuid}/replan'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\TransferController::replan'
+    _format: json
+  requirements:
+    _permission: 'approve application dispatch'
+    _entity_access: 'application.update'
+    _custom_access: '\Drupal\beantragt_delivery\Controller\TransferController::access'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+    uuid: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_delivery.transfer_create:
+  path: '/api/admin/applications/{application}/transfers'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\TransferController::createTransfer'
+    _format: json
+  requirements:
+    _permission: 'approve application dispatch'
+    _entity_access: 'application.update'
+    _custom_access: '\Drupal\beantragt_delivery\Controller\TransferController::access'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_delivery.application_delivery_view:
+  path: '/api/admin/applications/{application}/delivery'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\ApplicationDeliveryController::view'
+    _format: json
+  requirements:
+    _permission: 'manage application deliveries+approve application dispatch'
+    _entity_access: 'application.view'
+    _custom_access: '\Drupal\beantragt_delivery\Controller\ApplicationDeliveryController::access'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_delivery.application_delivery_change:
+  path: '/api/admin/applications/{application}/delivery'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\ApplicationDeliveryController::change'
+    _format: json
+  requirements:
+    _permission: 'approve application dispatch'
+    _entity_access: 'application.update'
+    _custom_access: '\Drupal\beantragt_delivery\Controller\ApplicationDeliveryController::changeAccess'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_delivery.application_delivery_postal_handover:
+  path: '/api/admin/applications/{application}/responses/{response_id}/postal-handover'
+  defaults:
+    _controller: '\Drupal\beantragt_delivery\Controller\ApplicationDeliveryController::handOver'
+    _format: json
+  requirements:
+    _permission: 'approve application dispatch'
+    _entity_access: 'application.update'
+    _custom_access: '\Drupal\beantragt_delivery\Controller\ApplicationDeliveryController::changeAccess'
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+    response_id: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application

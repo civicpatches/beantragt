@@ -1,0 +1,570 @@
+<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for beantragt_roles module.
+ */
+
+declare(strict_types=1);
+
+use Drupal\beantragt_roles\StaffNameFields;
+use Drupal\user\Entity\Role;
+
+/**
+ * Implements hook_install().
+ *
+ * Creates Case Worker, Department Admin and protected-data roles with their
+ * respective permissions. Also ensures the authenticated role has citizen
+ * self-service permissions.
+ *
+ * Role labels default to English. German translations can be added via
+ * Drupal's config translation system at
+ * admin/config/regional/config-translation.
+ */
+function beantragt_roles_install(): void {
+  $logger = \Drupal::logger('beantragt_roles');
+  $available_permissions = array_keys(\Drupal::service('user.permissions')->getPermissions());
+
+  // Case Worker permissions.
+  $case_worker_permissions = [
+    // View all applications (not just own).
+    'view published application entities',
+    'view unpublished application entities',
+    // Edit applications (change workflow status, add notes).
+    'edit any application entities',
+    'edit application data entities',
+    // The assigned clerk needs name and address to process the case.
+    // Organisation scoping still decides which cases a clerk can open.
+    'view protected application data',
+    // View form schemas to understand what was submitted.
+    'view published form_schema entities',
+    'view published form_schema_group entities',
+    // Workflow permissions.
+    'manage workflow transitions',
+    'view workflow assignments',
+    'assign applications',
+    // Decision notices from Word templates (beantragt_docgen): draft and
+    // release. Only granted when beantragt_docgen is installed; otherwise
+    // beantragt_docgen grants them on its own install.
+    'create docgen documents',
+    'release docgen documents',
+  ];
+
+  // Department Admin permissions: everything case_worker has, plus schema
+  // management and admin access.
+  $department_admin_permissions = array_merge($case_worker_permissions, [
+    // Workflow delegation.
+    'delegate applications',
+    // Full schema management.
+    'create form_schema entities',
+    'edit own form_schema entities',
+    'edit any form_schema entities',
+    'delete own form_schema entities',
+    'delete any form_schema entities',
+    'view unpublished form_schema entities',
+    'administer form_schema entities',
+    // Publishing is its own right; the admin permission does not imply it.
+    'publish form_schema entities',
+    // Full form schema group management.
+    'create form_schema_group entities',
+    'edit own form_schema_group entities',
+    'edit any form_schema_group entities',
+    'delete own form_schema_group entities',
+    'delete any form_schema_group entities',
+    'view unpublished form_schema_group entities',
+    'administer form_schema_group entities',
+    // Workflow definition catalogue management.
+    'administer workflow_status entities',
+    // Permanent removal of spam, test and otherwise invalid applications.
+    'delete any application entities',
+    // Permanent removal through the tenant-scoped applicant cleanup API.
+    'administer scoped applicant cleanup',
+    // Attachment quarantine decisions.
+    'manage quarantined application attachments',
+    // Outbound delivery outbox and retries.
+    'manage application deliveries',
+    // Decision template catalog (beantragt_docgen).
+    'administer docgen templates',
+    // Drupal admin pages access.
+    'access administration pages',
+    // Sites updated from Drupal 11.3 keep Toolbar; fresh 11.4 installs of the
+    // Standard profile get Navigation instead. Only the installed one applies.
+    'access toolbar',
+    'access navigation',
+  ]);
+
+  // Applicant self-service permissions for the authenticated role.
+  $authenticated_permissions = [
+    'view own application entities',
+    'view own applicant entities',
+    'delete own applicant entities',
+    'manage own applicant profile',
+    'view published form_schema entities',
+  ];
+
+  // Additive role for staff who may reveal protected application case values.
+  $protected_data_permissions = [
+    'view protected application data',
+  ];
+
+  $retention_policy_permissions = [
+    'administer beantragt retention policies',
+  ];
+
+  if (!Role::load('case_worker')) {
+    $role = Role::create([
+      'id' => 'case_worker',
+      'label' => 'Case Worker',
+      'weight' => 3,
+    ]);
+    foreach (array_intersect($case_worker_permissions, $available_permissions) as $permission) {
+      $role->grantPermission($permission);
+    }
+    $role->save();
+    $logger->notice('Created role "Case Worker" with @count permissions.', [
+      '@count' => count($case_worker_permissions),
+    ]);
+  }
+
+  if (!Role::load('department_admin')) {
+    $role = Role::create([
+      'id' => 'department_admin',
+      'label' => 'Department Admin',
+      'weight' => 4,
+    ]);
+    foreach (array_intersect($department_admin_permissions, $available_permissions) as $permission) {
+      $role->grantPermission($permission);
+    }
+    $role->save();
+    $logger->notice('Created role "Department Admin" with @count permissions.', [
+      '@count' => count($department_admin_permissions),
+    ]);
+  }
+
+  if (!Role::load('protected_application_data_processor')) {
+    $role = Role::create([
+      'id' => 'protected_application_data_processor',
+      'label' => 'Protected Application Data Processor',
+      'weight' => 5,
+    ]);
+    foreach (array_intersect($protected_data_permissions, $available_permissions) as $permission) {
+      $role->grantPermission($permission);
+    }
+    $role->save();
+    $logger->notice('Created role "Protected Application Data Processor" with @count permissions.', [
+      '@count' => count($protected_data_permissions),
+    ]);
+  }
+
+  if (!Role::load('retention_policy_admin')) {
+    $role = Role::create([
+      'id' => 'retention_policy_admin',
+      'label' => 'Retention Policy Administrator',
+      'weight' => 6,
+    ]);
+    foreach (array_intersect($retention_policy_permissions, $available_permissions) as $permission) {
+      $role->grantPermission($permission);
+    }
+    $role->save();
+    $logger->notice('Created role "Retention Policy Administrator" with @count permissions.', [
+      '@count' => count($retention_policy_permissions),
+    ]);
+  }
+
+  $authenticated = Role::load('authenticated');
+  if ($authenticated) {
+    $added = 0;
+    foreach (array_intersect($authenticated_permissions, $available_permissions) as $permission) {
+      if (!$authenticated->hasPermission($permission)) {
+        $authenticated->grantPermission($permission);
+        $added++;
+      }
+    }
+    if ($added > 0) {
+      $authenticated->save();
+      $logger->notice('Added @count citizen self-service permissions to authenticated role.', [
+        '@count' => $added,
+      ]);
+    }
+  }
+
+  // The global administrator publishes forms as well.
+  _beantragt_roles_grant_publish_permission();
+
+  // Platform-level integration targets are intentionally restricted to the
+  // global administrator role, not department admins.
+  $administrator = Role::load('administrator');
+  if ($administrator && !$administrator->hasPermission('administer application delivery settings') && in_array('administer application delivery settings', $available_permissions, TRUE)) {
+    $administrator->grantPermission('administer application delivery settings');
+    $administrator->save();
+  }
+
+  // First and last name of staff accounts, shown to staff instead of the
+  // login name.
+  StaffNameFields::ensure(\Drupal::entityTypeManager());
+}
+
+/**
+ * Grants workflow definition catalogue management to Department Admin.
+ */
+function beantragt_roles_update_10001(): string {
+  $role = Role::load('department_admin');
+  if (!$role) {
+    return 'department_admin role not found.';
+  }
+  if (!$role->hasPermission('administer workflow_status entities')) {
+    $role->grantPermission('administer workflow_status entities');
+    $role->save();
+    return 'Granted workflow status administration to department_admin.';
+  }
+
+  return 'department_admin already has workflow status administration.';
+}
+
+/**
+ * Grants submitted application data editing to Department Admin.
+ */
+function beantragt_roles_update_10002(): string {
+  $role = Role::load('department_admin');
+  if (!$role) {
+    return 'department_admin role not found.';
+  }
+  if (!$role->hasPermission('edit application data entities')) {
+    $role->grantPermission('edit application data entities');
+    $role->save();
+    return 'Granted application data editing to department_admin.';
+  }
+
+  return 'department_admin already has application data editing.';
+}
+
+/**
+ * Creates the additive protected application data processor role.
+ */
+function beantragt_roles_update_10003(): string {
+  $role = Role::load('protected_application_data_processor');
+  if (!$role) {
+    $role = Role::create([
+      'id' => 'protected_application_data_processor',
+      'label' => 'Protected Application Data Processor',
+      'weight' => 5,
+    ]);
+  }
+
+  if (!$role->hasPermission('view protected application data')) {
+    $role->grantPermission('view protected application data');
+    $role->save();
+    return 'Created protected_application_data_processor role and granted protected data reveal permission.';
+  }
+
+  if ($role->isNew()) {
+    $role->save();
+    return 'Created protected_application_data_processor role.';
+  }
+
+  return 'protected_application_data_processor already has protected data reveal permission.';
+}
+
+/**
+ * Creates the additive retention policy administrator role.
+ */
+function beantragt_roles_update_10004(): string {
+  $role = Role::load('retention_policy_admin');
+  if (!$role) {
+    $role = Role::create([
+      'id' => 'retention_policy_admin',
+      'label' => 'Retention Policy Administrator',
+      'weight' => 6,
+    ]);
+  }
+
+  if (!$role->hasPermission('administer beantragt retention policies')) {
+    $role->grantPermission('administer beantragt retention policies');
+    $role->save();
+    return 'Created retention_policy_admin role and granted retention policy administration permission.';
+  }
+
+  if ($role->isNew()) {
+    $role->save();
+    return 'Created retention_policy_admin role.';
+  }
+
+  return 'retention_policy_admin already has retention policy administration permission.';
+}
+
+/**
+ * Removes broad applicant entity view from staff roles.
+ */
+function beantragt_roles_update_10005(): string {
+  $changed = [];
+  foreach (['case_worker', 'department_admin'] as $role_id) {
+    $role = Role::load($role_id);
+    if (!$role || !$role->hasPermission('view published applicant entities')) {
+      continue;
+    }
+    $role->revokePermission('view published applicant entities');
+    $role->save();
+    $changed[] = $role_id;
+  }
+
+  return $changed === []
+    ? 'Staff roles already lack broad applicant entity view permission.'
+    : 'Revoked broad applicant entity view permission from: ' . implode(', ', $changed) . '.';
+}
+
+/**
+ * Grants global delivery settings administration to platform administrators.
+ */
+function beantragt_roles_update_10006(): string {
+  $role = Role::load('administrator');
+  if (!$role) {
+    return 'administrator role not found.';
+  }
+  if (!$role->hasPermission('administer application delivery settings')) {
+    $role->grantPermission('administer application delivery settings');
+    $role->save();
+    return 'Granted delivery settings administration to administrator.';
+  }
+
+  return 'administrator already has delivery settings administration.';
+}
+
+/**
+ * Grants application delegation to Department Admin.
+ */
+function beantragt_roles_update_10007(): string {
+  $role = Role::load('department_admin');
+  if (!$role) {
+    return 'department_admin role not found.';
+  }
+  if (!$role->hasPermission('delegate applications')) {
+    $role->grantPermission('delegate applications');
+    $role->save();
+    return 'Granted application delegation to department_admin.';
+  }
+
+  return 'department_admin already has application delegation.';
+}
+
+/**
+ * Revokes application delegation from Case Worker.
+ */
+function beantragt_roles_update_10008(): string {
+  $role = Role::load('case_worker');
+  if (!$role) {
+    return 'case_worker role not found.';
+  }
+  if ($role->hasPermission('delegate applications')) {
+    $role->revokePermission('delegate applications');
+    $role->save();
+    return 'Revoked application delegation from case_worker.';
+  }
+
+  return 'case_worker already lacks application delegation.';
+}
+
+/**
+ * Grants permanent application deletion to Department Admin.
+ */
+function beantragt_roles_update_10009(): string {
+  $role = Role::load('department_admin');
+  if (!$role) {
+    return 'department_admin role not found.';
+  }
+  if (!$role->hasPermission('delete any application entities')) {
+    $role->grantPermission('delete any application entities');
+    $role->save();
+    return 'Granted application deletion to department_admin.';
+  }
+
+  return 'department_admin already has application deletion.';
+}
+
+/**
+ * Grants tenant-scoped applicant cleanup to Department Admin.
+ */
+function beantragt_roles_update_10010(): string {
+  $role = Role::load('department_admin');
+  if (!$role) {
+    return 'department_admin role not found.';
+  }
+  if (!$role->hasPermission('administer scoped applicant cleanup')) {
+    $role->grantPermission('administer scoped applicant cleanup');
+    $role->save();
+    return 'Granted scoped applicant cleanup to department_admin.';
+  }
+
+  return 'department_admin already has scoped applicant cleanup.';
+}
+
+/**
+ * Grants allowlisted applicant profile self-service to authenticated users.
+ */
+function beantragt_roles_update_10011(): string {
+  $role = Role::load('authenticated');
+  if (!$role) {
+    return 'authenticated role not found.';
+  }
+  if ($role->hasPermission('manage own applicant profile')) {
+    return 'authenticated already has applicant profile self-service.';
+  }
+
+  $role->grantPermission('manage own applicant profile');
+  $role->save();
+  return 'Granted applicant profile self-service to authenticated.';
+}
+
+/**
+ * Lets case workers read protected values of the cases they may open.
+ */
+function beantragt_roles_update_10012(): string {
+  $role = Role::load('case_worker');
+  if (!$role) {
+    return 'case_worker role not found.';
+  }
+  if ($role->hasPermission('view protected application data')) {
+    return 'case_worker already reads protected application data.';
+  }
+
+  $role->grantPermission('view protected application data');
+  $role->save();
+  return 'Granted protected application data to case_worker.';
+}
+
+/**
+ * Grants the decision document permissions of beantragt_docgen.
+ *
+ * Covers sites where beantragt_docgen was installed before the roles
+ * existed; beantragt_docgen grants them itself in the other order.
+ */
+function beantragt_roles_update_10013(): string {
+  $available = array_keys(\Drupal::service('user.permissions')->getPermissions());
+  $grants = [
+    'case_worker' => ['create docgen documents', 'release docgen documents'],
+    'department_admin' => ['administer docgen templates', 'create docgen documents', 'release docgen documents'],
+  ];
+  $granted = 0;
+  foreach ($grants as $role_id => $permissions) {
+    $role = Role::load($role_id);
+    if (!$role) {
+      continue;
+    }
+    $changed = FALSE;
+    foreach (array_intersect($permissions, $available) as $permission) {
+      if (!$role->hasPermission($permission)) {
+        $role->grantPermission($permission);
+        $changed = TRUE;
+        $granted++;
+      }
+    }
+    if ($changed) {
+      $role->save();
+    }
+  }
+  return $granted > 0 ? "Granted $granted decision document permission(s)." : 'Decision document permissions already granted or beantragt_docgen not installed.';
+}
+
+/**
+ * Adds first and last name to user accounts.
+ *
+ * Staff see colleagues by name in assignment, status history, transfers and
+ * decision notices instead of by login name. Citizens never see these names.
+ */
+function beantragt_roles_update_10014(): string {
+  $messages = StaffNameFields::ensure(\Drupal::entityTypeManager());
+  return $messages === [] ? 'First and last name fields already exist.' : implode(' ', $messages);
+}
+
+/**
+ * Grants the form publish permission to department_admin and administrator.
+ *
+ * @return string[]
+ *   Ids of the roles granted the permission by this update.
+ */
+function _beantragt_roles_grant_publish_permission(): array {
+  $permission = 'publish form_schema entities';
+  $available = array_keys(\Drupal::service('user.permissions')->getPermissions());
+  if (!in_array($permission, $available, TRUE)) {
+    return [];
+  }
+  $granted = [];
+  foreach (['department_admin', 'administrator'] as $role_id) {
+    $role = Role::load($role_id);
+    if (!$role || $role->isAdmin() || $role->hasPermission($permission)) {
+      continue;
+    }
+    $role->grantPermission($permission);
+    $role->save();
+    $granted[] = $role_id;
+  }
+  return $granted;
+}
+
+/**
+ * Grants the new form publish permission and names other editors.
+ *
+ * Publishing a form (workflow status, published flag or internet scope)
+ * needs "publish form_schema entities"; "administer form_schema entities"
+ * does not imply it. department_admin and administrator get it. The service
+ * account deliberately does not. Other roles that edit forms lose the
+ * ability to publish until the permission is granted to them; they are named
+ * in the message.
+ */
+function beantragt_roles_update_10015(): string {
+  $permission = 'publish form_schema entities';
+  $granted = _beantragt_roles_grant_publish_permission();
+  $editing = [];
+  foreach (Role::loadMultiple() as $role) {
+    if (in_array($role->id(), ['department_admin', 'administrator', 'service_account'], TRUE)
+      || $role->isAdmin()
+      || $role->hasPermission($permission)) {
+      continue;
+    }
+    foreach (['administer form_schema entities', 'edit any form_schema entities', 'edit own form_schema entities'] as $edit) {
+      if ($role->hasPermission($edit)) {
+        $editing[] = $role->id();
+        break;
+      }
+    }
+  }
+  $message = $granted === []
+    ? 'Form publish permission already granted to department_admin and administrator.'
+    : 'Granted the form publish permission to ' . implode(', ', $granted) . '.';
+  $message .= ' service_account deliberately has no publish permission.';
+  if ($editing !== []) {
+    $message .= ' These roles edit forms but can no longer publish them until "' . $permission . '" is granted: ' . implode(', ', $editing) . '.';
+  }
+  return $message;
+}
+
+/**
+ * Grants submitted application data correction to scoped case workers.
+ */
+function beantragt_roles_update_10016(): string {
+  $role = Role::load('case_worker');
+  if (!$role) {
+    return 'case_worker role not found.';
+  }
+  if (!$role->hasPermission('edit application data entities')) {
+    $role->grantPermission('edit application data entities')->save();
+  }
+  return 'case_worker has application data editing in its writable scope.';
+}
+
+/**
+ * Implements hook_uninstall().
+ *
+ * Removes the roles created by this module.
+ */
+function beantragt_roles_uninstall(): void {
+  $role_ids = ['case_worker', 'department_admin', 'protected_application_data_processor', 'retention_policy_admin'];
+  foreach ($role_ids as $role_id) {
+    $role = Role::load($role_id);
+    if ($role) {
+      $role->delete();
+      \Drupal::logger('beantragt_roles')->notice('Deleted role "@role".', [
+        '@role' => $role_id,
+      ]);
+    }
+  }
+}

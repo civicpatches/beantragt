@@ -1,0 +1,14 @@
+name: Beantragt Roles
+type: module
+description: 'Defines user roles and permissions for the beantragt pilot: Case Worker, Department Admin and protected-data processor.'
+core_version_requirement: ^11
+package: Beantragt
+dependencies:
+  - beantragt_schema:beantragt_schema
+  - beantragt_form_schema_group:beantragt_form_schema_group
+  - beantragt_application:beantragt_application
+  - beantragt_applicant:beantragt_applicant
+  - beantragt_workflow:beantragt_workflow
+  - beantragt_roles_api:beantragt_roles_api
+  - drupal:field
+  - drupal:user

@@ -1,0 +1,1084 @@
+<?php
+
+/**
+ * @file
+ * Beantragt Notification module.
+ *
+ * Handles email notifications for workflow transitions and
+ * application lifecycle events.
+ */
+
+declare(strict_types=1);
+
+use Drupal\beantragt_application\RevisionLog;
+use Drupal\beantragt_notification\Service\ResubmissionReminderResolver;
+use Drupal\beantragt_workflow_status\Entity\WorkflowStatusInterface;
+use Drupal\language\ConfigurableLanguageManagerInterface;
+use Drupal\beantragt_application\Entity\ApplicationInterface;
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\FieldableEntityInterface;
+use Drupal\Core\Entity\RevisionableStorageInterface;
+use Drupal\Core\Session\AccountInterface;
+
+/**
+ * Implements hook_theme().
+ */
+function beantragt_notification_theme(): array {
+  return [
+    'beantragt_notification_mail' => [
+      'variables' => [
+        'langcode' => 'de',
+        'branding' => [],
+        'subject' => '',
+        'body' => '',
+        'code' => '',
+        'cta_url' => '',
+        'cta_label' => '',
+      ],
+      'template' => 'beantragt-notification-mail',
+    ],
+  ];
+}
+
+/**
+ * Implements hook_mail().
+ *
+ * Builds email messages from config-based templates with token replacements.
+ */
+function beantragt_notification_mail(string $key, array &$message, array $params): void {
+  $valid_keys = [
+    'application_confirmation_request',
+    'application_confirmation',
+    'status_change',
+    'approval',
+    'rejection',
+    'new_application_alert',
+    'assignment_alert',
+    'delegation_alert',
+    'escalation_alert',
+    'deadline_alert',
+    'resubmission_reminder',
+    'application_comment_staff',
+    'application_comment_citizen',
+    'external_response_available',
+  ];
+
+  if (!in_array($key, $valid_keys, TRUE)) {
+    $message['send'] = FALSE;
+    return;
+  }
+
+  $langcode = $message['langcode'] ?? 'de';
+  $mail_config = NULL;
+
+  $resolved_template = $params['resolvedTemplate'] ?? NULL;
+  if (
+    is_array($resolved_template)
+    && isset($resolved_template['subject'], $resolved_template['body'])
+    && trim((string) $resolved_template['subject']) !== ''
+    && trim((string) $resolved_template['body']) !== ''
+  ) {
+    $mail_config = [
+      'subject' => (string) $resolved_template['subject'],
+      'body' => (string) $resolved_template['body'],
+    ];
+  }
+
+  if ($mail_config === NULL) {
+    // Load mail config in the message's language if the Language module
+    // is available.
+    $language_manager = \Drupal::languageManager();
+    if ($language_manager instanceof ConfigurableLanguageManagerInterface) {
+      $override = $language_manager->getLanguageConfigOverride($langcode, 'beantragt_notification.mail');
+      $mail_config = $override->get($key);
+    }
+
+    // Fallback to default config if no translation found.
+    if (empty($mail_config)) {
+      $mail_config = \Drupal::config('beantragt_notification.mail')->get($key);
+    }
+  }
+
+  if (empty($mail_config['subject']) || empty($mail_config['body'])) {
+    \Drupal::logger('beantragt_notification')->error(
+      'Mail template "@key" is missing subject or body configuration.',
+      ['@key' => $key]
+    );
+    $message['send'] = FALSE;
+    return;
+  }
+
+  $replacements = $params['replacements'] ?? [];
+  $body = _beantragt_notification_strip_empty_link_token_lines(
+    (string) $mail_config['body'],
+    $replacements,
+  );
+  // The standalone reason line is optional in both shipped and saved
+  // rejection templates. Keep surrounding text and inline token uses intact.
+  if ($key === 'rejection' && trim((string) ($replacements['@rejection_reason'] ?? '')) === '') {
+    $body = preg_replace('/^\h*(?:[^\r\n]+:\h*)?@rejection_reason\h*(?:\R|$)/mu', '', $body) ?? $body;
+  }
+  // @full_name can be empty (protected identity) or an email fallback.
+  // Keep that fallback in other fields, but omit it from the opening line.
+  $name = trim((string) ($replacements['@full_name'] ?? ''));
+  if ($name === '' || filter_var($name, FILTER_VALIDATE_EMAIL)) {
+    $body = preg_replace('/\A([^\r\n]*?)\h+@full_name,(?=\h*(?:\R|$))/u', '$1,', $body, 1) ?? $body;
+  }
+
+  $message['subject'] = strtr($mail_config['subject'], $replacements);
+  $rendered_body = strtr($body, $replacements);
+  // The confirmation request names the consents the link makes effective.
+  $consent_notice = trim((string) ($params['consentNotice'] ?? ''));
+  if ($consent_notice !== '') {
+    $rendered_body = rtrim($rendered_body) . "\n\n" . $consent_notice;
+  }
+  $email_footer = trim((string) ($params['emailFooter'] ?? ''));
+  if ($email_footer !== '') {
+    $rendered_body = rtrim($rendered_body) . "\n\n-- \n" . $email_footer;
+  }
+  $message['body'][] = $rendered_body;
+}
+
+/**
+ * Implements hook_module_implements_alter().
+ */
+function beantragt_notification_module_implements_alter(array &$implementations, string $hook): void {
+  if ($hook !== 'mail_alter' || !isset($implementations['beantragt_notification'])) {
+    return;
+  }
+
+  // The staging recipient fence must be the last word on recipients after
+  // other mail alters have finished composing, branding, or routing messages.
+  $implementation = $implementations['beantragt_notification'];
+  unset($implementations['beantragt_notification']);
+  $implementations['beantragt_notification'] = $implementation;
+}
+
+/**
+ * Implements hook_mail_alter().
+ */
+function beantragt_notification_mail_alter(array &$message): void {
+  // Compose tenant-branded HTML first. The recipient fence below deliberately
+  // remains the final operation so branding can never undo staging routing.
+  try {
+    if (\Drupal::hasService('beantragt_notification.branded_mail_composer')) {
+      /** @var \Drupal\beantragt_notification\Service\BrandedMailComposer $composer */
+      $composer = \Drupal::service('beantragt_notification.branded_mail_composer');
+      $composer->compose($message);
+    }
+  }
+  catch (\Throwable $exception) {
+    // Fail open to the original plain-text mail. Delivery is more important
+    // than visual branding, especially for OTP and confirmation messages.
+    \Drupal::logger('beantragt_notification')->error(
+      'Unable to compose branded mail for @message_key: @error',
+      [
+        '@message_key' => (string) ($message['module'] ?? '') . ':' . (string) ($message['key'] ?? ''),
+        '@error' => $exception->getMessage(),
+      ],
+    );
+  }
+
+  // A shared Mailpit must protect live recipients and privileged sign-in codes.
+  if (!empty($message['send'] ?? TRUE) && _beantragt_notification_public_mailpit_fence_enabled()) {
+    $reason = _beantragt_notification_public_mailpit_block_reason($message);
+    if ($reason !== NULL) {
+      $message['send'] = FALSE;
+      // A deliberate skip, not a transport failure (see the reserved fence).
+      $message['beantragt_reserved_recipient_suppressed'] = TRUE;
+      \Drupal::logger('beantragt_notification')->notice(
+        'Shared Mailpit fence dropped mail to @domain for @message_key (@reason).',
+        [
+          '@domain' => _beantragt_notification_mail_recipient_domain((string) ($message['to'] ?? '')),
+          '@message_key' => (string) ($message['module'] ?? '') . ':' . (string) ($message['key'] ?? ''),
+          '@reason' => $reason,
+        ],
+      );
+      return;
+    }
+  }
+
+  $redirect_recipient = _beantragt_notification_mail_redirect_recipient();
+  if ($redirect_recipient === NULL) {
+    // Demo and fixture data use reserved domains that can never receive mail.
+    // Handing them to the real SMTP provider only produces rejections that
+    // ruin the sending domain's reputation. Mailpit mode keeps them so local
+    // and staging smokes can still assert on those messages.
+    if (
+      !empty($message['send'] ?? TRUE)
+      && strtolower(trim((string) (getenv('BEANTRAGT_MAIL_MODE') ?: 'mailpit'))) === 'smtp'
+      && _beantragt_notification_mail_recipients_all_reserved((string) ($message['to'] ?? ''))
+    ) {
+      $message['send'] = FALSE;
+      // Lets callers tell a deliberate skip from a transport failure, so
+      // reminder loops advance their state instead of retrying every cron run.
+      $message['beantragt_reserved_recipient_suppressed'] = TRUE;
+      \Drupal::logger('beantragt_notification')->notice(
+        'Mail to reserved domain @domain was not sent for @message_key.',
+        [
+          '@domain' => _beantragt_notification_mail_recipient_domain((string) $message['to']),
+          '@message_key' => (string) ($message['module'] ?? '') . ':' . (string) ($message['key'] ?? ''),
+        ],
+      );
+    }
+    return;
+  }
+
+  if (!_beantragt_notification_mail_redirect_recipient_is_valid($redirect_recipient)) {
+    // Fail closed. A broken staging fence must never deliver to the original
+    // citizen or staff recipient.
+    $message['send'] = FALSE;
+    $message['to'] = '';
+    $message['reply-to'] = NULL;
+    if (isset($message['headers']) && is_array($message['headers'])) {
+      foreach (array_keys($message['headers']) as $header_name) {
+        if (in_array(strtolower((string) $header_name), ['to', 'cc', 'bcc', 'reply-to'], TRUE)) {
+          unset($message['headers'][$header_name]);
+        }
+      }
+    }
+    \Drupal::logger('beantragt_notification')->error(
+      'BEANTRAGT_MAIL_REDIRECT_RECIPIENT is set but is not a valid email address. Outbound delivery was blocked.'
+    );
+    return;
+  }
+
+  $original_to = trim((string) ($message['to'] ?? ''));
+  $original_domain = _beantragt_notification_mail_recipient_domain($original_to);
+
+  if (isset($message['headers']) && is_array($message['headers'])) {
+    _beantragt_notification_mail_rewrite_recipient_headers($message['headers'], $redirect_recipient);
+  }
+
+  $message['to'] = $redirect_recipient;
+  $message['reply-to'] = $redirect_recipient;
+  $message['subject'] = _beantragt_notification_mail_sanitize_header_value(
+    '[STAGING→' . $original_domain . '] ' . (string) ($message['subject'] ?? ''),
+  );
+
+  $log_context = [
+    '@original_recipient' => $original_domain,
+    '@redirect_recipient' => _beantragt_notification_mail_recipient_domain($redirect_recipient),
+    '@message_key' => (string) ($message['module'] ?? '') . ':' . (string) ($message['key'] ?? ''),
+  ];
+  if (_beantragt_notification_mail_is_development_environment()) {
+    // The manager can log full development diagnostics after transport success.
+    $message['beantragt_redirect_log'] = [
+      'domains' => $log_context,
+      'accepted' => [
+        '@original_recipient' => $original_to !== '' ? $original_to : $original_domain,
+        '@redirect_recipient' => $redirect_recipient,
+      ] + $log_context,
+    ];
+    return;
+  }
+  _beantragt_notification_log_mail_redirect($log_context);
+}
+
+/**
+ * Logs the recipient routing selected by the redirect fence.
+ */
+function _beantragt_notification_log_mail_redirect(array $context): void {
+  \Drupal::logger('beantragt_notification')->notice(
+    'Mail redirect fence active: original recipient @original_recipient redirected to @redirect_recipient for @message_key.',
+    $context,
+  );
+}
+
+/**
+ * Returns TRUE when the operator has marked Mailpit as shared.
+ */
+function _beantragt_notification_public_mailpit_fence_enabled(): bool {
+  $value = getenv('BEANTRAGT_MAILPIT_PUBLIC');
+
+  return $value !== FALSE && in_array(strtolower(trim((string) $value)), ['1', 'true', 'yes'], TRUE);
+}
+
+/**
+ * Returns why a mail must not reach a public Mailpit, or NULL to keep it.
+ *
+ * Only reserved recipients are permitted. Sign-in mail for privileged
+ * accounts is suppressed.
+ *
+ * @param array<string, mixed> $message
+ *   The Drupal mail message.
+ */
+function _beantragt_notification_public_mailpit_block_reason(array $message): ?string {
+  $recipients = _beantragt_notification_mail_all_recipients($message);
+  if ($recipients === []) {
+    return 'no_recipient';
+  }
+
+  $addresses = [];
+  foreach ($recipients as $recipient) {
+    $address = _beantragt_notification_mail_recipient_address($recipient);
+    if ($address === NULL) {
+      return 'recipient_not_reserved';
+    }
+    $domain = substr($address, strrpos($address, '@') + 1);
+    if (!_beantragt_notification_mail_domain_is_reserved($domain)) {
+      return 'recipient_not_reserved';
+    }
+    $addresses[] = $address;
+  }
+
+  if (in_array((string) ($message['module'] ?? ''), ['beantragt_passwordless', 'user'], TRUE)) {
+    foreach ($addresses as $address) {
+      if (_beantragt_notification_mail_address_is_privileged_account($address)) {
+        return 'privileged_sign_in';
+      }
+    }
+  }
+
+  return NULL;
+}
+
+/**
+ * Collects the raw recipient entries of To, Cc and Bcc.
+ *
+ * @param array<string, mixed> $message
+ *   The Drupal mail message.
+ *
+ * @return list<string>
+ *   Non-empty recipient entries.
+ */
+function _beantragt_notification_mail_all_recipients(array $message): array {
+  $lists = [(string) ($message['to'] ?? '')];
+  if (isset($message['headers']) && is_array($message['headers'])) {
+    foreach ($message['headers'] as $name => $value) {
+      if (in_array(strtolower((string) $name), ['to', 'cc', 'bcc'], TRUE) && is_scalar($value)) {
+        $lists[] = (string) $value;
+      }
+    }
+  }
+
+  $recipients = [];
+  foreach ($lists as $list) {
+    foreach (explode(',', $list) as $entry) {
+      $entry = trim($entry);
+      if ($entry !== '') {
+        $recipients[] = $entry;
+      }
+    }
+  }
+
+  return $recipients;
+}
+
+/**
+ * Returns the lowercase address of one recipient entry, or NULL.
+ *
+ * Accepts "local@domain" and "Name <local@domain>" only; anything else is
+ * unparsable and treated as unknown by the callers.
+ */
+function _beantragt_notification_mail_recipient_address(string $recipient): ?string {
+  $recipient = trim($recipient);
+  if (preg_match('/^[^<>@]*<([^<>\s]+)>$/', $recipient, $matches) === 1) {
+    $recipient = $matches[1];
+  }
+  $recipient = strtolower(rtrim($recipient, '.'));
+
+  return filter_var($recipient, FILTER_VALIDATE_EMAIL) !== FALSE ? $recipient : NULL;
+}
+
+/**
+ * Returns TRUE when the address belongs to UID 1 or a role beyond citizen.
+ *
+ * Fails closed: a lookup error counts as privileged.
+ */
+function _beantragt_notification_mail_address_is_privileged_account(string $address): bool {
+  try {
+    $accounts = \Drupal::entityTypeManager()
+      ->getStorage('user')
+      ->loadByProperties(['mail' => $address]);
+  }
+  catch (\Throwable) {
+    return TRUE;
+  }
+
+  foreach ($accounts as $account) {
+    if ((int) $account->id() === 1 || array_diff($account->getRoles(), [AccountInterface::AUTHENTICATED_ROLE]) !== []) {
+      return TRUE;
+    }
+  }
+
+  return FALSE;
+}
+
+/**
+ * Reads the staging mail redirect recipient from the process environment.
+ */
+function _beantragt_notification_mail_redirect_recipient(): ?string {
+  $value = getenv('BEANTRAGT_MAIL_REDIRECT_RECIPIENT');
+  $recipient = trim($value === FALSE ? '' : (string) $value);
+
+  return $recipient === '' ? NULL : $recipient;
+}
+
+/**
+ * Returns TRUE when a configured redirect recipient is header-safe email.
+ */
+function _beantragt_notification_mail_redirect_recipient_is_valid(string $recipient): bool {
+  if (_beantragt_notification_mail_sanitize_header_value($recipient) !== $recipient) {
+    return FALSE;
+  }
+
+  return filter_var($recipient, FILTER_VALIDATE_EMAIL) !== FALSE;
+}
+
+/**
+ * Rewrites recipient headers and removes Cc/Bcc case-insensitively.
+ *
+ * @param array<string, mixed> $headers
+ *   Mail headers altered by reference.
+ * @param string $redirect_recipient
+ *   Valid redirect recipient address.
+ */
+function _beantragt_notification_mail_rewrite_recipient_headers(array &$headers, string $redirect_recipient): void {
+  foreach (array_keys($headers) as $header_name) {
+    $name = (string) $header_name;
+    if (strcasecmp($name, 'Cc') === 0 || strcasecmp($name, 'Bcc') === 0) {
+      unset($headers[$header_name]);
+      continue;
+    }
+
+    if (strcasecmp($name, 'To') === 0) {
+      $headers[$header_name] = $redirect_recipient;
+      continue;
+    }
+
+    if (strcasecmp($name, 'Reply-To') === 0) {
+      unset($headers[$header_name]);
+    }
+  }
+
+  // Keep replies from the staging mailbox inside the same fenced mailbox.
+  $headers['Reply-To'] = $redirect_recipient;
+}
+
+/**
+ * Extracts the first recipient domain without exposing the local part.
+ */
+function _beantragt_notification_mail_recipient_domain(string $recipient): string {
+  if (preg_match('/[A-Z0-9._%+\-]+@([A-Z0-9.\-]+\.[A-Z]{2,})/i', $recipient, $matches) !== 1) {
+    return 'unknown-recipient';
+  }
+
+  return strtolower(rtrim((string) $matches[1], '.'));
+}
+
+/**
+ * Returns TRUE when every recipient uses a domain that can never receive mail.
+ *
+ * Covers RFC 2606 (example.com/.net/.org, *.example) and RFC 6761 (*.invalid,
+ * *.test, *.localhost). An empty or unparsable recipient list is not treated
+ * as reserved, so this check never hides a different delivery problem.
+ */
+function _beantragt_notification_mail_recipients_all_reserved(string $to): bool {
+  $recipients = array_filter(array_map('trim', explode(',', $to)), static fn (string $recipient): bool => $recipient !== '');
+  if ($recipients === []) {
+    return FALSE;
+  }
+
+  foreach ($recipients as $recipient) {
+    $domain = _beantragt_notification_mail_recipient_domain($recipient);
+    if ($domain === 'unknown-recipient' || !_beantragt_notification_mail_domain_is_reserved($domain)) {
+      return FALSE;
+    }
+  }
+
+  return TRUE;
+}
+
+/**
+ * Returns TRUE for RFC 2606 and RFC 6761 reserved mail domains.
+ */
+function _beantragt_notification_mail_domain_is_reserved(string $domain): bool {
+  foreach (['example.com', 'example.net', 'example.org'] as $reserved) {
+    if ($domain === $reserved || str_ends_with($domain, '.' . $reserved)) {
+      return TRUE;
+    }
+  }
+
+  foreach (['example', 'invalid', 'test', 'localhost'] as $tld) {
+    if (str_ends_with($domain, '.' . $tld)) {
+      return TRUE;
+    }
+  }
+
+  return FALSE;
+}
+
+/**
+ * Returns TRUE for local development labels used by beantragt.ai.
+ */
+function _beantragt_notification_mail_is_development_environment(): bool {
+  $environment = strtolower(trim((string) (getenv('BEANTRAGT_ENV') ?: '')));
+
+  return in_array($environment, ['dev', 'local', 'ddev', 'development'], TRUE);
+}
+
+/**
+ * Strips CR, LF, and NUL bytes from a mail header value.
+ */
+function _beantragt_notification_mail_sanitize_header_value(string $value): string {
+  return str_replace(["\r", "\n", "\0"], '', $value);
+}
+
+/**
+ * Removes body lines containing empty application-link tokens.
+ *
+ * This keeps default templates safe when a deployment has not configured
+ * beantragt_group.settings:frontend_base_url yet.
+ *
+ * @param string $body
+ *   Mail template body before token replacement.
+ * @param array<string, mixed> $replacements
+ *   Token replacements keyed by Drupal mail token.
+ *
+ * @return string
+ *   Body with empty link-token lines removed.
+ */
+function _beantragt_notification_strip_empty_link_token_lines(string $body, array $replacements): string {
+  foreach (['@citizen_application_url', '@admin_application_url', '@confirmation_url'] as $token) {
+    if (trim((string) ($replacements[$token] ?? '')) !== '') {
+      continue;
+    }
+
+    $body = preg_replace('/^.*' . preg_quote($token, '/') . '.*(?:\R|$)/m', '', $body) ?? $body;
+  }
+
+  return rtrim($body);
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_insert() for application.
+ *
+ * Sends application_confirmation to the citizen and new_application_alert
+ * to the responsible Sachbearbeiter when a new application is created.
+ */
+function beantragt_notification_application_insert(EntityInterface $entity): void {
+  if (!$entity instanceof ApplicationInterface) {
+    return;
+  }
+  if (\Drupal::hasService('beantragt_notification.reminder_schedule')) {
+    \Drupal::service('beantragt_notification.reminder_schedule')->sync($entity);
+  }
+  if (!$entity->isEmailConfirmed()) {
+    return;
+  }
+
+  if ($entity->hasField('field_origin') && $entity->get('field_origin')->value === 'bulk') {
+    $id = (int) $entity->id();
+    $transactions = \Drupal::database()->transactionManager();
+    if ($transactions->inTransaction()) {
+      $transactions->addPostTransactionCallback(static function (bool $success) use ($id): void {
+        if (!$success) {
+          return;
+        }
+        try {
+          $storage = \Drupal::entityTypeManager()->getStorage('application');
+          $storage->resetCache([$id]);
+          $fresh = $storage->load($id);
+          if ($fresh instanceof ApplicationInterface) {
+            _beantragt_notification_send_confirmed_application_mails($fresh);
+          }
+        }
+        catch (\Throwable) {
+          \Drupal::logger('beantragt_notification')->warning('Bulk receipt notification could not be delivered for application @id.', ['@id' => $id]);
+        }
+      });
+      return;
+    }
+  }
+  _beantragt_notification_send_confirmed_application_mails($entity);
+}
+
+/**
+ * Sends the double opt-in confirmation request mail.
+ */
+function beantragt_notification_beantragt_application_confirmation_request(ApplicationInterface $application, string $confirmation_url, ?string $fallback_recipient = NULL): void {
+  /** @var \Drupal\beantragt_notification\Service\NotificationMailer $mailer */
+  $mailer = \Drupal::service('beantragt_notification.mailer');
+  $mailer->sendApplicationConfirmationRequest($application, $confirmation_url, $fallback_recipient);
+}
+
+/**
+ * Sends normal application lifecycle mails after double opt-in.
+ */
+function beantragt_notification_beantragt_application_confirmed(ApplicationInterface $application): void {
+  _beantragt_notification_send_confirmed_application_mails($application);
+}
+
+/**
+ * Sends citizen receipt and staff alert for confirmed applications.
+ */
+function _beantragt_notification_send_confirmed_application_mails(ApplicationInterface $entity): void {
+  /** @var \Drupal\beantragt_notification\Service\NotificationMailer $mailer */
+  $mailer = \Drupal::service('beantragt_notification.mailer');
+
+  // Staff intake has no citizen notification channel for these applications.
+  if ($entity->hasField('field_origin') && $entity->get('field_origin')->value === 'bulk') {
+    $mailer->sendStaffNotification($entity, 'new_application_alert');
+    return;
+  }
+
+  // Citizen confirmation.
+  $extra_tokens = [];
+  $submit_status_url = $entity->getSubmitStatusUrl();
+  if ($submit_status_url !== NULL) {
+    $extra_tokens['@citizen_application_url'] = $submit_status_url;
+  }
+  $mailer->sendCitizenNotification($entity, 'application_confirmation', $extra_tokens);
+
+  // Staff alert about new application.
+  $mailer->sendStaffNotification($entity, 'new_application_alert');
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_update() for application.
+ *
+ * Sends staff assignment notifications for audited manual assignment changes.
+ */
+function beantragt_notification_application_update(EntityInterface $entity): void {
+  if (!$entity instanceof ApplicationInterface) {
+    return;
+  }
+  if (\Drupal::hasService('beantragt_notification.reminder_schedule')) {
+    \Drupal::service('beantragt_notification.reminder_schedule')->sync($entity);
+  }
+  if (!$entity->isEmailConfirmed()) {
+    return;
+  }
+
+  if (!_beantragt_notification_application_assignment_changed($entity)) {
+    return;
+  }
+
+  if (!_beantragt_notification_is_manual_assignment_revision($entity)) {
+    return;
+  }
+
+  /** @var \Drupal\beantragt_notification\Service\NotificationMailer $mailer */
+  $mailer = \Drupal::service('beantragt_notification.mailer');
+  $mailer->sendAssignmentNotification($entity);
+}
+
+/**
+ * Returns TRUE when an audited assignment endpoint created the revision.
+ */
+function _beantragt_notification_is_manual_assignment_revision(ApplicationInterface $application): bool {
+  $raw = (string) $application->getRevisionLogMessage();
+  // The assignment endpoint records the stable assignment_changed event.
+  // Logs written before civic.revision.v1 carried a generated sentence.
+  return in_array('assignment_changed', RevisionLog::decode($raw)['events'] ?? [], TRUE)
+    || str_starts_with($raw, 'Application assignment changed by ');
+}
+
+/**
+ * Returns TRUE when the person or team assignment changed.
+ */
+function _beantragt_notification_application_assignment_changed(ApplicationInterface $application): bool {
+  $original = $application->original ?? NULL;
+  if (!$original instanceof ApplicationInterface) {
+    return FALSE;
+  }
+
+  foreach (['field_assigned_to', 'field_assigned_team'] as $field_name) {
+    if (_beantragt_notification_field_target_id($application, $field_name)
+      !== _beantragt_notification_field_target_id($original, $field_name)) {
+      return TRUE;
+    }
+  }
+
+  return FALSE;
+}
+
+/**
+ * Reads an entity-reference target id safely from an application field.
+ */
+function _beantragt_notification_field_target_id(ApplicationInterface $application, string $field_name): ?int {
+  if (!$application->hasField($field_name) || $application->get($field_name)->isEmpty()) {
+    return NULL;
+  }
+
+  $target_id = (int) ($application->get($field_name)->target_id ?? 0);
+  return $target_id > 0 ? $target_id : NULL;
+}
+
+/**
+ * Implements hook_cron().
+ *
+ * Sends scheduled staff alerts for escalations and due applications.
+ */
+function beantragt_notification_cron(): void {
+  if (\Drupal::hasService('beantragt_notification.reminder_schedule')) {
+    \Drupal::service('beantragt_notification.reminder_schedule')->run();
+  }
+  _beantragt_notification_send_deadline_alerts();
+}
+
+/**
+ * Returns when the application entered its current workflow status.
+ */
+function _beantragt_notification_application_status_entered_time(ApplicationInterface $application): int {
+  $fallback = (int) $application->getChangedTime();
+  if ($fallback <= 0) {
+    $fallback = (int) $application->getCreatedTime();
+  }
+
+  $applicationId = $application->id();
+  if ($applicationId === NULL || !$application->hasField('field_workflow_status') || $application->get('field_workflow_status')->isEmpty()) {
+    return $fallback;
+  }
+
+  $currentStatusId = _beantragt_notification_application_workflow_status_id($application);
+  if ($currentStatusId <= 0) {
+    return $fallback;
+  }
+
+  $storage = \Drupal::entityTypeManager()->getStorage('application');
+  if (!$storage instanceof RevisionableStorageInterface) {
+    return $fallback;
+  }
+
+  $currentRevisionId = (int) $application->getRevisionId();
+  $enteredRevision = $application;
+  $revisionIds = $storage->getQuery()
+    ->accessCheck(FALSE)
+    ->allRevisions()
+    ->condition('id', $applicationId)
+    ->sort('revision_id', 'DESC')
+    ->execute();
+
+  foreach (array_keys($revisionIds) as $revisionId) {
+    $revisionId = (int) $revisionId;
+    if ($revisionId === $currentRevisionId) {
+      continue;
+    }
+
+    $revision = $storage->loadRevision($revisionId);
+    if (!$revision instanceof ApplicationInterface
+      || !$revision->hasField('field_workflow_status')
+      || $revision->get('field_workflow_status')->isEmpty()) {
+      break;
+    }
+
+    $revisionStatusId = _beantragt_notification_application_workflow_status_id($revision);
+    if ($revisionStatusId !== $currentStatusId) {
+      break;
+    }
+
+    $enteredRevision = $revision;
+  }
+
+  $enteredTime = (int) $enteredRevision->getRevisionCreationTime();
+  return $enteredTime > 0 ? $enteredTime : $fallback;
+}
+
+/**
+ * Reads the workflow status target id through the field API.
+ */
+function _beantragt_notification_application_workflow_status_id(ApplicationInterface $application): int {
+  if (!$application->hasField('field_workflow_status') || $application->get('field_workflow_status')->isEmpty()) {
+    return 0;
+  }
+
+  $field = $application->get('field_workflow_status');
+  $targetId = (int) ($field->target_id ?? 0);
+  if ($targetId > 0) {
+    return $targetId;
+  }
+
+  $values = $field->getValue();
+  $targetId = is_array($values) ? (int) ($values[0]['target_id'] ?? 0) : 0;
+  return max(0, $targetId);
+}
+
+/**
+ * Resolves the effective escalation window for an application.
+ */
+function _beantragt_notification_application_escalation_days(ApplicationInterface $application, int $defaultEscalationDays): int {
+  if (!$application->hasField('field_workflow_status') || $application->get('field_workflow_status')->isEmpty()) {
+    return max(0, $defaultEscalationDays);
+  }
+
+  $status = $application->get('field_workflow_status')->entity;
+  if ($status instanceof WorkflowStatusInterface) {
+    if ($status->isTerminal()) {
+      return 0;
+    }
+    $statusDays = $status->getEscalationDays();
+    if ($statusDays > 0) {
+      return $statusDays;
+    }
+  }
+
+  return max(0, $defaultEscalationDays);
+}
+
+/**
+ * Sends staff reminders for applications due today or overdue.
+ */
+function _beantragt_notification_send_deadline_alerts(): void {
+  $settings = \Drupal::config('beantragt_notification.settings');
+  if (empty($settings->get('enabled_templates.deadline_alert'))) {
+    return;
+  }
+
+  $nonTerminalIds = _beantragt_notification_non_terminal_workflow_status_ids();
+  if (empty($nonTerminalIds)) {
+    return;
+  }
+
+  $today = _beantragt_notification_berlin_day_key(\Drupal::time()->getRequestTime());
+  $entityTypeManager = \Drupal::entityTypeManager();
+  $storage = $entityTypeManager->getStorage('application');
+  $ids = $storage->getQuery()
+    ->accessCheck(FALSE)
+    ->condition('field_email_confirmed', TRUE)
+    ->condition('field_workflow_status', array_values($nonTerminalIds), 'IN')
+    ->condition('field_due_date', $today, '<=')
+    ->sort('field_due_date', 'ASC')
+    ->execute();
+
+  if (empty($ids)) {
+    return;
+  }
+
+  /** @var \Drupal\beantragt_notification\Service\NotificationMailer $mailer */
+  $mailer = \Drupal::service('beantragt_notification.mailer');
+  $state = \Drupal::state();
+  $sentCount = 0;
+
+  foreach (array_chunk($ids, 100, TRUE) as $chunkIds) {
+    $applications = $storage->loadMultiple($chunkIds);
+    foreach ($applications as $application) {
+      if (!$application instanceof ApplicationInterface) {
+        continue;
+      }
+
+      $dueDate = _beantragt_notification_application_due_date($application);
+      if ($dueDate === NULL || $dueDate > $today) {
+        continue;
+      }
+
+      $applicationId = $application->id();
+      if ($applicationId === NULL) {
+        continue;
+      }
+
+      $stateKey = 'beantragt_notification.deadline_alert_sent.' . $applicationId;
+      if ((string) $state->get($stateKey, '') === $dueDate) {
+        continue;
+      }
+
+      $sent = $mailer->sendStaffNotification($application, 'deadline_alert', [
+        '@due_date' => _beantragt_notification_format_due_date($dueDate),
+      ]);
+      if (!$sent) {
+        continue;
+      }
+
+      $state->set($stateKey, $dueDate);
+      $sentCount++;
+    }
+  }
+
+  if ($sentCount > 0) {
+    \Drupal::logger('beantragt_notification')->info(
+      'Deadline cron: sent @count deadline alerts.',
+      ['@count' => $sentCount]
+    );
+  }
+}
+
+/**
+ * Builds the State API key for one application's resubmission reminder stream.
+ */
+function _beantragt_notification_resubmission_state_key(int|string $applicationId): string {
+  return 'beantragt_notification.resubmission.' . $applicationId;
+}
+
+/**
+ * Normalizes a stored resubmission reminder state value.
+ *
+ * @return array{count: int, last: int, condition: string}
+ *   Normalized count, last-send timestamp, and stale condition marker.
+ */
+function _beantragt_notification_resubmission_state_record(mixed $value): array {
+  if (!is_array($value)) {
+    return ['count' => 0, 'last' => 0, 'condition' => ''];
+  }
+
+  return [
+    'count' => max(0, (int) ($value['count'] ?? 0)),
+    'last' => max(0, (int) ($value['last'] ?? 0)),
+    'condition' => is_string($value['condition'] ?? NULL) ? $value['condition'] : '',
+  ];
+}
+
+/**
+ * Resets state when a later stale phase starts after status or changed moved.
+ *
+ * @param array{count: int, last: int, condition: string} $record
+ *   Normalized resubmission reminder state.
+ *
+ * @return array{count: int, last: int, condition: string}
+ *   State scoped to the current stale condition.
+ */
+function _beantragt_notification_resubmission_state_for_condition(array $record, string $condition): array {
+  if ($record['condition'] !== '' && $record['condition'] !== $condition) {
+    return [
+      'count' => 0,
+      'last' => 0,
+      'condition' => $condition,
+    ];
+  }
+
+  $record['condition'] = $condition;
+  return $record;
+}
+
+/**
+ * Returns the whole idle days since the application last changed.
+ */
+function _beantragt_notification_application_idle_days(ApplicationInterface $application, int $currentTime): int {
+  $changed = (int) $application->getChangedTime();
+  if ($changed <= 0) {
+    $changed = (int) $application->getCreatedTime();
+  }
+
+  if ($changed >= $currentTime) {
+    return 0;
+  }
+
+  return intdiv($currentTime - $changed, 86400);
+}
+
+/**
+ * Builds a marker for the current stale phase.
+ */
+function _beantragt_notification_resubmission_condition_marker(ApplicationInterface $application): string {
+  $changed = (int) $application->getChangedTime();
+  if ($changed <= 0) {
+    $changed = (int) $application->getCreatedTime();
+  }
+
+  return _beantragt_notification_application_workflow_status_id($application) . ':' . max(0, $changed);
+}
+
+/**
+ * Returns all non-terminal workflow status entity ids.
+ *
+ * @return array<int|string, int|string>
+ *   Entity ids keyed by entity id.
+ */
+function _beantragt_notification_non_terminal_workflow_status_ids(): array {
+  return \Drupal::entityTypeManager()->getStorage('workflow_status')->getQuery()
+    ->accessCheck(FALSE)
+    ->condition('field_is_terminal', FALSE)
+    ->execute();
+}
+
+/**
+ * Returns the local Europe/Berlin date key for a request timestamp.
+ */
+function _beantragt_notification_berlin_day_key(int $timestamp): string {
+  return (new \DateTimeImmutable('@' . $timestamp))
+    ->setTimezone(new \DateTimeZone('Europe/Berlin'))
+    ->format('Y-m-d');
+}
+
+/**
+ * Reads and validates the application due date as YYYY-MM-DD.
+ */
+function _beantragt_notification_application_due_date(ApplicationInterface $application): ?string {
+  if (!$application->hasField('field_due_date') || $application->get('field_due_date')->isEmpty()) {
+    return NULL;
+  }
+
+  $value = trim((string) $application->get('field_due_date')->value);
+  if ($value === '') {
+    return NULL;
+  }
+
+  $date = \DateTimeImmutable::createFromFormat(
+    '!Y-m-d',
+    $value,
+    new \DateTimeZone('UTC'),
+  );
+  $errors = \DateTimeImmutable::getLastErrors();
+  if ($date === FALSE || (is_array($errors) && ((int) $errors['warning_count'] > 0 || (int) $errors['error_count'] > 0))) {
+    return NULL;
+  }
+
+  return $date->format('Y-m-d');
+}
+
+/**
+ * Formats a YYYY-MM-DD due date for staff notification templates.
+ */
+function _beantragt_notification_format_due_date(string $date): string {
+  $parsed = \DateTimeImmutable::createFromFormat('!Y-m-d', $date, new \DateTimeZone('UTC'));
+  return $parsed instanceof \DateTimeImmutable ? $parsed->format('d.m.Y') : $date;
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_delete() for application.
+ */
+function beantragt_notification_application_delete(EntityInterface $entity): void {
+  if ($entity instanceof ApplicationInterface && \Drupal::hasService('beantragt_notification.reminder_schedule')) {
+    \Drupal::service('beantragt_notification.reminder_schedule')->delete((int) $entity->id());
+  }
+}
+
+/**
+ * Implements hook_entity_update().
+ */
+function beantragt_notification_entity_update(EntityInterface $entity): void {
+  if (!$entity instanceof FieldableEntityInterface || !\Drupal::hasService('beantragt_notification.reminder_schedule')) {
+    return;
+  }
+  $fields = match ($entity->getEntityTypeId()) {
+    'form_schema' => ['field_schema'],
+    'group' => ['field_jur_config', 'field_jurisdiction', 'field_org_email'],
+    'workflow_status' => ['field_escalation_days', 'field_is_terminal'],
+    'user' => ['mail'],
+    default => [],
+  };
+  $original = $entity->getOriginal();
+  foreach ($fields as $field) {
+    if ($entity->hasField($field) && (!$original || _beantragt_notification_schedule_policy_value($entity, $field) !== _beantragt_notification_schedule_policy_value($original, $field))) {
+      \Drupal::service('beantragt_notification.reminder_schedule')->invalidate();
+      break;
+    }
+  }
+}
+
+/**
+ * Normalizes reminder-relevant values, ignoring JSON formatting and labels.
+ */
+function _beantragt_notification_schedule_policy_value(FieldableEntityInterface $entity, string $field): mixed {
+  if (in_array($field, ['field_schema', 'field_jur_config'], TRUE)) {
+    $decoded = json_decode((string) $entity->get($field)->value, TRUE);
+    $policy = is_array($decoded) && is_array($decoded['resubmission'] ?? NULL) ? $decoded['resubmission'] : [];
+    $reminders = [
+      ResubmissionReminderResolver::normalizeReminderDays($policy['reminderDays'] ?? NULL),
+      ResubmissionReminderResolver::normalizeScope($policy['reminderScope'] ?? NULL),
+    ];
+    if ($field === 'field_jur_config') {
+      foreach (['escalation_alert', 'resubmission_reminder'] as $template) {
+        $reminders[] = $decoded['notification_mail']['templates'][$template]['enabled'] ?? NULL;
+      }
+    }
+    return $reminders;
+  }
+  if (in_array($field, ['field_org_email', 'mail'], TRUE)) {
+    return trim((string) $entity->get($field)->value);
+  }
+  if ($field === 'field_jurisdiction') {
+    return (int) $entity->get($field)->target_id;
+  }
+  return (int) $entity->get($field)->value;
+}

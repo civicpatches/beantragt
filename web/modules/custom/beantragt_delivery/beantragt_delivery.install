@@ -1,0 +1,825 @@
+<?php
+
+/**
+ * @file
+ * Install and uninstall functions for beantragt_delivery.
+ */
+
+declare(strict_types=1);
+
+use Drupal\beantragt_delivery\Service\ExternalResponseRepository;
+use Drupal\beantragt_delivery\Service\DeliveryLogRepository;
+use Drupal\beantragt_delivery\Service\TransferPayloadRepository;
+use Drupal\beantragt_delivery\Service\FitConnectCaseRepository;
+use Drupal\beantragt_delivery\Service\IntegrationRepository;
+use Drupal\beantragt_delivery\Service\IntegrationRules;
+use Drupal\beantragt_delivery\Service\TransferPlanningRecovery;
+use Drupal\Core\Database\Statement\FetchAs;
+use Drupal\Core\Utility\UpdateException;
+use Drupal\beantragt_delivery\Value\FitConnectSettings;
+use Drupal\user\Entity\Role;
+use Drupal\beantragt_schema\Entity\FormSchemaInterface;
+
+/**
+ * Implements hook_install().
+ */
+function beantragt_delivery_install(): void {
+  _beantragt_delivery_grant_role_permissions();
+  _beantragt_delivery_grant_integration_permissions();
+  _beantragt_delivery_grant_dispatch_permissions();
+}
+
+/**
+ * Implements hook_schema().
+ */
+function beantragt_delivery_schema(): array {
+  $schema['beantragt_transfer_plan'] = TransferPlanningRecovery::schema();
+  $schema['beantragt_delivery_log'] = [
+    'description' => 'Stores outbound application delivery attempts without raw application payloads.',
+    'fields' => [
+      'id' => [
+        'description' => 'Primary delivery attempt ID.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'uuid' => [
+        'description' => 'Public UUID for this delivery attempt.',
+        'type' => 'varchar_ascii',
+        'length' => 128,
+        'not null' => TRUE,
+      ],
+      'application_id' => [
+        'description' => 'Internal application entity ID.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'application_uuid' => [
+        'description' => 'Application UUID at queue time.',
+        'type' => 'varchar_ascii',
+        'length' => 128,
+        'not null' => TRUE,
+      ],
+      'adapter' => [
+        'description' => 'Delivery adapter machine name.',
+        'type' => 'varchar_ascii',
+        'length' => 64,
+        'not null' => TRUE,
+      ],
+      'target' => [
+        'description' => 'Configured delivery target label or destination ID.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ],
+      'status' => [
+        'description' => 'Current technical delivery status.',
+        'type' => 'varchar_ascii',
+        'length' => 32,
+        'not null' => TRUE,
+      ],
+      'attempts' => [
+        'description' => 'Number of processing attempts.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ],
+      'data_hash' => [
+        'description' => 'SHA-256 hash of the application data JSON.',
+        'type' => 'varchar_ascii',
+        'length' => 64,
+        'not null' => TRUE,
+      ],
+      'external_id' => [
+        'description' => 'External submission, webhook or mock receipt ID.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ],
+      'receipt' => [
+        'description' => 'Non-sensitive delivery receipt reference.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+        'default' => '',
+      ],
+      'last_error' => [
+        'description' => 'Last non-sensitive delivery error message.',
+        'type' => 'varchar',
+        'length' => 512,
+        'not null' => TRUE,
+        'default' => '',
+      ],
+      'metadata' => [
+        'description' => 'Technical metadata JSON without raw submitted values.',
+        'type' => 'text',
+        'size' => 'big',
+        'not null' => FALSE,
+      ],
+      'created' => [
+        'description' => 'Unix timestamp when the delivery attempt was created.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'changed' => [
+        'description' => 'Unix timestamp when the delivery attempt last changed.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'processed' => [
+        'description' => 'Unix timestamp when the delivery attempt was last processed.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => FALSE,
+      ],
+    ],
+    'primary key' => ['id'],
+    'unique keys' => [
+      'uuid' => ['uuid'],
+    ],
+    'indexes' => [
+      'application_id' => ['application_id'],
+      'application_uuid' => ['application_uuid'],
+      'status' => ['status'],
+      'adapter' => ['adapter'],
+      'created' => ['created'],
+    ],
+  ];
+
+  $schema['beantragt_delivery_log']['fields'] += DeliveryLogRepository::bindingFields() + DeliveryLogRepository::operationalFields();
+  $schema['beantragt_delivery_log']['indexes'] += [
+    'payload_reference' => ['payload_reference'],
+    'scope_connection' => ['scope_group_id', 'integration_connection_uuid'],
+    'replaces_uuid' => ['replaces_uuid'],
+  ];
+  $schema['beantragt_transfer_audit'] = _beantragt_delivery_audit_schema();
+
+  return $schema
+    + TransferPayloadRepository::schema()
+    + ExternalResponseRepository::schema()
+    + FitConnectCaseRepository::schema()
+    + IntegrationRepository::schema();
+}
+
+/**
+ * Grants delivery administration to tenant administrators.
+ */
+function _beantragt_delivery_grant_role_permissions(): bool {
+  $permission = 'manage application deliveries';
+  $available_permissions = array_keys(\Drupal::service('user.permissions')->getPermissions());
+  if (!in_array($permission, $available_permissions, TRUE)) {
+    return FALSE;
+  }
+
+  $role = Role::load('department_admin');
+  if (!$role || $role->hasPermission($permission)) {
+    return FALSE;
+  }
+
+  $role->grantPermission($permission);
+  $role->save();
+  return TRUE;
+}
+
+/**
+ * Grants delivery administration to existing Department Admin installs.
+ */
+function beantragt_delivery_update_10001(): string {
+  return _beantragt_delivery_grant_role_permissions()
+    ? 'Granted delivery administration to department_admin.'
+    : 'Delivery administration permission was already up to date.';
+}
+
+/**
+ * Adds a bounded retry limit to existing delivery settings.
+ */
+function beantragt_delivery_update_10002(): string {
+  $config = \Drupal::configFactory()->getEditable('beantragt_delivery.settings');
+  if ($config->get('max_attempts') === NULL) {
+    $config->set('max_attempts', 3)->save();
+    return 'Configured delivery max_attempts default.';
+  }
+
+  return 'Delivery max_attempts setting was already configured.';
+}
+
+/**
+ * Adds signed webhook delivery defaults to existing delivery settings.
+ */
+function beantragt_delivery_update_10003(): string {
+  $config = \Drupal::configFactory()->getEditable('beantragt_delivery.settings');
+  if ($config->get('webhook') !== NULL) {
+    return 'Webhook delivery settings were already configured.';
+  }
+
+  $config->set('webhook', [
+    'target_url' => '',
+    'secret_env' => 'BEANTRAGT_WEBHOOK_SECRET',
+    'allowed_hosts' => [],
+    'timeout_seconds' => 5,
+  ])->save();
+
+  return 'Configured signed webhook delivery defaults.';
+}
+
+/**
+ * Adds private external responses and encrypted FIT-Connect reply case keys.
+ */
+function beantragt_delivery_update_10004(): string {
+  $schema = \Drupal::database()->schema();
+  $tables = _beantragt_delivery_update_schema(10004);
+  foreach ($tables as $name => $definition) {
+    if (!$schema->tableExists($name)) {
+      $schema->createTable($name, $definition);
+    }
+  }
+  $config = \Drupal::configFactory()->getEditable('beantragt_delivery.settings');
+  $defaults = [
+    'reply_enabled' => FALSE,
+    'reply_process_standard' => 'urn:beantragt:process:decision:1',
+    'trust_external_release' => FALSE,
+  ];
+  foreach ($defaults as $key => $value) {
+    if ($config->get('fit_connect.' . $key) === NULL) {
+      $config->set('fit_connect.' . $key, $value);
+    }
+  }
+  $config->save();
+  return 'Installed external response storage and disabled-by-default FIT-Connect replies.';
+}
+
+/**
+ * Installs tenant integration storage and migrates operator credentials only.
+ */
+function beantragt_delivery_update_10005(): string {
+  $schema = \Drupal::database()->schema();
+  foreach (_beantragt_delivery_update_schema(10005) as $name => $definition) {
+    if (!$schema->tableExists($name)) {
+      $schema->createTable($name, $definition);
+    }
+  }
+  $config = \Drupal::configFactory()->getEditable('beantragt_delivery.settings');
+  $profiles = $config->get('credential_profiles') ?? [];
+  if (!array_key_exists('default', $profiles)) {
+    $old = $config->get('fit_connect') ?? [];
+    $profiles['default'] = ['label' => 'Default FIT-Connect TEST'];
+    foreach (['client_id', 'client_secret_env', 'token_url', 'submission_api_base', 'metadata_schema_version'] as $key) {
+      $profiles['default'][$key] = $old[$key] ?? '';
+    }
+    $config->set('credential_profiles', $profiles)->save();
+  }
+  _beantragt_delivery_grant_integration_permissions();
+  return 'Installed integration foundation; migrated default profile without creating assignments or deliveries.';
+}
+
+/**
+ * Grants integration management exclusively to the department admin role.
+ */
+function _beantragt_delivery_grant_integration_permissions(): bool {
+  $permissions = ['administer integration connections', 'administer integration mappings'];
+  $available = array_keys(\Drupal::service('user.permissions')->getPermissions());
+  if (array_diff($permissions, $available) !== []) {
+    return FALSE;
+  }
+  $role = Role::load('department_admin');
+  if (!$role) {
+    return FALSE;
+  }
+  $changed = FALSE;
+  foreach ($permissions as $permission) {
+    if (!$role->hasPermission($permission)) {
+      $role->grantPermission($permission);
+      $changed = TRUE;
+    }
+  }
+  if ($changed) {
+    $role->save();
+  }
+  return $changed;
+}
+
+/**
+ * Binds operator profiles to scopes and upgrades existing integration storage.
+ */
+function beantragt_delivery_update_10006(): string {
+  _beantragt_delivery_update_storage_10006();
+  _beantragt_delivery_normalize_keys_10006();
+  $config = \Drupal::configFactory()->getEditable('beantragt_delivery.settings');
+  $profiles = $config->get('credential_profiles') ?? [];
+  $changed = FALSE;
+  foreach ($profiles as $key => &$profile) {
+    // Only the legacy default receives an explicit global grant.
+    $legacy_default = $key === 'default'
+      && !array_key_exists('all_scopes', $profile)
+      && !array_key_exists('allowed_scopes', $profile);
+    if (!array_key_exists('allowed_scopes', $profile)) {
+      $profile['allowed_scopes'] = [];
+      $changed = TRUE;
+    }
+    if (!array_key_exists('all_scopes', $profile)) {
+      $profile['all_scopes'] = $legacy_default;
+      $changed = TRUE;
+    }
+    if ($key === 'default') {
+      $defaults = [
+        'token_url' => FitConnectSettings::DEFAULT_TEST_TOKEN_URL,
+        'submission_api_base' => FitConnectSettings::DEFAULT_TEST_SUBMISSION_API_BASE,
+      ];
+      foreach ($defaults as $field => $value) {
+        if (($profile[$field] ?? '') === '') {
+          $profile[$field] = $value;
+          $changed = TRUE;
+        }
+      }
+    }
+  }
+  unset($profile);
+  if ($changed) {
+    $config->set('credential_profiles', $profiles)->save();
+  }
+
+  $granted = _beantragt_delivery_grant_integration_permissions();
+  $role = Role::load('department_admin');
+  if ($granted) {
+    $permissions = 'Granted integration permissions to department_admin.';
+  }
+  elseif ($role && $role->hasPermission('administer integration connections') && $role->hasPermission('administer integration mappings')) {
+    $permissions = 'Integration permissions were already granted to department_admin.';
+  }
+  else {
+    $permissions = 'Integration permissions were not granted: department_admin or permission definitions are unavailable.';
+  }
+  $message = 'Updated integration storage and explicit credential scope grants without creating deliveries. ' . $permissions;
+  if (isset($profiles['default']) && ($profiles['default']['client_id'] ?? '') === '') {
+    $message .= ' The default credential profile has an empty client_id and requires operator configuration; no environment secret was read.';
+  }
+  return $message;
+}
+
+/**
+ * Applies guarded storage changes on either old or freshly installed tables.
+ */
+function _beantragt_delivery_update_storage_10006(): void {
+  $database = \Drupal::database();
+  $schema = $database->schema();
+  // Historical definitions remain independent of future hook_schema changes.
+  foreach (_beantragt_delivery_update_schema(10006) as $table => $definition) {
+    if (!$schema->tableExists($table)) {
+      $schema->createTable($table, $definition);
+      continue;
+    }
+    foreach ($definition['fields'] as $field => $specification) {
+      if (!$schema->fieldExists($table, $field)) {
+        $schema->addField($table, $field, $specification);
+      }
+      elseif ($specification['type'] === 'varchar_ascii' || $field === 'last_check_result') {
+        $schema->changeField($table, $field, $field, $specification);
+      }
+    }
+    foreach ($definition['indexes'] ?? [] as $name => $columns) {
+      if (!$schema->indexExists($table, $name)) {
+        $schema->addIndex($table, $name, $columns, $definition);
+      }
+    }
+    foreach ($definition['unique keys'] ?? [] as $name => $columns) {
+      if (!$schema->indexExists($table, $name)) {
+        $schema->addUniqueKey($table, $name, $columns);
+      }
+    }
+    if ($schema->fieldExists($table, 'last_check_result')) {
+      $database->update($table)->fields(['last_check_result' => NULL])
+        ->condition('last_check_result', 'null')->execute();
+    }
+  }
+}
+
+/**
+ * Canonicalizes legacy integration keys without silently resolving conflicts.
+ */
+function _beantragt_delivery_normalize_keys_10006(): void {
+  $database = \Drupal::database();
+  $transaction = $database->startTransaction();
+  try {
+    $changes = [];
+    $slots = [];
+    $scopes = [];
+    foreach (['connection', 'mapping', 'mapping_version', 'assignment'] as $resource) {
+      $query = $database->select('beantragt_integration_' . $resource, 'i')->fields('i', ['scope_group_id']);
+      $scopes = [...$scopes, ...$query->distinct()->execute()->fetchCol()];
+    }
+    $scopes = array_unique($scopes);
+    sort($scopes, SORT_NUMERIC);
+    foreach ($scopes as $scope) {
+      $database->upsert('beantragt_integration_scope_lock')->key('scope_group_id')->fields(['scope_group_id'])->values([(int) $scope])->execute();
+      $query = $database->select('beantragt_integration_scope_lock', 's')->fields('s')->condition('scope_group_id', $scope);
+      $query->forUpdate();
+      $query->execute()->fetchField();
+    }
+    foreach (['connection', 'mapping', 'mapping_version', 'assignment'] as $resource) {
+      $table = 'beantragt_integration_' . $resource;
+      $query = $database->select($table, 'i')->fields('i');
+      $query->forUpdate();
+      foreach ($query->execute()->fetchAll(FetchAs::Associative) as $row) {
+        $fields = [];
+        $identifiers = [
+          'uuid', 'form_schema_uuid', 'connection_uuid', 'mapping_uuid',
+          'destination_id', 'service_urn', 'reply_process_standard',
+        ];
+        foreach ($identifiers as $field) {
+          if (isset($row[$field])) {
+            if (in_array($field, ['service_urn', 'reply_process_standard'], TRUE)
+              && preg_match('/\s|\p{C}/u', $row[$field])) {
+              throw new UpdateException('Integration keys contain whitespace or controls; operator correction is required before retrying update 10006.');
+            }
+            $value = strtolower($row[$field]);
+            if ($value !== $row[$field]) {
+              $fields[$field] = $value;
+            }
+          }
+        }
+        if ($resource === 'assignment') {
+          $key = $row['status'] === 'active'
+            ? hash('sha256', IntegrationRules::canonical([
+              (int) $row['scope_group_id'],
+              strtolower($row['form_schema_uuid']),
+              strtolower($row['service_urn']),
+            ]))
+            : NULL;
+          if ($key !== NULL && isset($slots[$key])) {
+            throw new UpdateException('Conflicting active integration assignments require operator resolution before retrying update 10006. No assignments were deactivated.');
+          }
+          if ($key !== NULL) {
+            $slots[$key] = TRUE;
+          }
+          if ($key !== $row['active_key']) {
+            $fields['active_key'] = $key;
+          }
+        }
+        if ($fields !== []) {
+          $changes[] = [$table, $resource, $row, $fields];
+        }
+      }
+    }
+    // Validate all slots before changing any data, keeping failures reversible.
+    foreach ($changes as [$table, $resource, $row, $fields]) {
+      $query = $database->update($table)->fields($fields);
+      if ($resource === 'mapping_version') {
+        $query->condition('mapping_uuid', $row['mapping_uuid'])->condition('version', $row['version']);
+      }
+      else {
+        $query->condition('uuid', $row['uuid']);
+      }
+      $query->execute();
+    }
+  }
+  catch (\Throwable $exception) {
+    $transaction->rollBack();
+    throw $exception;
+  }
+}
+
+/**
+ * Loads immutable historical DDL, never the current repository definitions.
+ *
+ * These versioned snapshots must not be edited when hook_schema evolves.
+ */
+function _beantragt_delivery_update_schema(int $update): array {
+  if (!in_array($update, [10004, 10005, 10006, 10007, 10008, 10009, 10013, 10014, 10015, 10016], TRUE)) {
+    throw new UpdateException('Unknown historical delivery schema update.');
+  }
+  return json_decode((string) file_get_contents(__DIR__ . '/updates/schema-' . $update . '.json'), TRUE, 128, JSON_THROW_ON_ERROR);
+}
+
+/**
+ * Adds immutable transfer bindings without creating any new deliveries.
+ */
+function beantragt_delivery_update_10007(): string {
+  $database = \Drupal::database();
+  $schema = $database->schema();
+  $state = \Drupal::state();
+  // Persist the exact candidate set before DDL. A interrupted update can resume
+  // without admitting rows created after the migration began.
+  $legacy_ids = $state->get('beantragt_delivery.legacy_candidate_ids');
+  if ($legacy_ids === NULL && !$state->get('beantragt_delivery.legacy_migration_complete', FALSE)) {
+    $legacy_ids = $database->select('beantragt_delivery_log', 'd')->fields('d', ['id'])
+      ->condition('adapter', 'fit_connect')->condition('status', ['queued', 'failed', 'processing'], 'IN')->execute()->fetchCol();
+    $legacy_ids = array_values(array_filter($legacy_ids, static function ($id) use ($database): bool {
+      $row = $database->select('beantragt_delivery_log', 'd')->fields('d', ['status', 'metadata'])->condition('id', $id)->execute()->fetchAssoc();
+      return $row['status'] !== 'processing' || empty(json_decode($row['metadata'] ?? '{}', TRUE)['fitConnect']);
+    }));
+    $state->set('beantragt_delivery.legacy_candidate_ids', $legacy_ids);
+  }
+  $frozen = _beantragt_delivery_update_schema(10007);
+  foreach ($frozen['binding_fields'] as $name => $definition) {
+    if (!$schema->fieldExists('beantragt_delivery_log', $name)) {
+      $schema->addField('beantragt_delivery_log', $name, $definition);
+    }
+  }
+  foreach ($frozen['tables'] as $name => $definition) {
+    if (!$schema->tableExists($name)) {
+      $schema->createTable($name, $definition);
+    }
+  }
+  if (!empty($legacy_ids) && !$state->get('beantragt_delivery.legacy_migration_complete', FALSE)) {
+    $database->update('beantragt_delivery_log')->fields(['legacy_eligible' => 1])
+      ->condition('adapter', 'fit_connect')->condition('status', ['queued', 'failed', 'processing'], 'IN')
+      ->condition('id', $legacy_ids, 'IN')->isNull('legacy_eligible')
+      ->isNull('integration_assignment_uuid')->isNull('scope_group_id')->execute();
+  }
+  $state->set('beantragt_delivery.legacy_migration_complete', TRUE);
+  $state->delete('beantragt_delivery.legacy_candidate_ids');
+  if (\Drupal::state()->get('beantragt_delivery.legacy_policies') === NULL) {
+    $report = [];
+    $storage = \Drupal::entityTypeManager()->getStorage('form_schema');
+    $ids = $storage->getQuery()->accessCheck(FALSE)->execute();
+    foreach (array_chunk($ids, 50) as $batch) {
+      foreach ($storage->loadMultiple($batch) as $form) {
+        if (!$form instanceof FormSchemaInterface) {
+          continue;
+        }
+        $data = json_decode((string) $form->get('field_schema')->value, TRUE);
+        if (($data['delivery']['adapter'] ?? NULL) === 'fit_connect') {
+          $report[] = [
+            'form_schema_uuid' => $form->uuid(),
+            'revision_id' => (int) $form->getRevisionId(),
+            'code' => 'integration.legacy_policy_without_assignment',
+          ];
+          \Drupal::logger('beantragt_delivery')->warning('Legacy FIT-Connect policy on form @uuid requires an activated assignment; no delivery was created.', ['@uuid' => $form->uuid()]);
+        }
+      }
+    }
+    \Drupal::state()->set('beantragt_delivery.legacy_policies', $report);
+  }
+  _beantragt_delivery_grant_dispatch_permissions();
+  return 'Installed protected transfer bindings and dispatch permission; recorded legacy policies without enqueueing applications.';
+}
+
+/**
+ * Grants independent dispatch approval to the two staff roles.
+ */
+function _beantragt_delivery_grant_dispatch_permissions(): void {
+  foreach (['case_worker', 'department_admin'] as $id) {
+    $role = Role::load($id);
+    if ($role !== NULL && !$role->hasPermission('approve application dispatch')) {
+      $role->grantPermission('approve application dispatch')->save();
+    }
+  }
+}
+
+/**
+ * Defines durable dispatch audit records containing identifiers only.
+ */
+function _beantragt_delivery_audit_schema(): array {
+  $fields = ['id' => ['type' => 'serial', 'not null' => TRUE]];
+  foreach (['application_id', 'scope_group_id', 'uid', 'created'] as $name) {
+    $fields[$name] = ['type' => 'int', 'unsigned' => TRUE, 'not null' => FALSE];
+  }
+  foreach (['application_uuid' => 36, 'transfer_uuid' => 36, 'action' => 32, 'outcome' => 16, 'code' => 128] as $name => $length) {
+    $fields[$name] = ['type' => 'varchar_ascii', 'length' => $length, 'not null' => TRUE];
+  }
+  return [
+    'fields' => $fields,
+    'primary key' => ['id'],
+    'indexes' => ['application_id' => ['application_id'], 'created' => ['created']],
+  ];
+}
+
+/**
+ * Implements hook_update_dependencies().
+ */
+function beantragt_delivery_update_dependencies(): array {
+  return [
+    'beantragt_delivery' => [
+      10007 => ['beantragt_application' => 10020],
+      10008 => ['beantragt_application' => 10020],
+      10009 => ['beantragt_application' => 10021],
+      // The coupling check looks for statuses with hand_over, an allowed
+      // value only after workflow status update 10007.
+      10013 => ['beantragt_workflow_status' => 10007],
+    ],
+  ];
+}
+
+/**
+ * Adds explicit recovery, independent audit retention and payload join indexes.
+ */
+function beantragt_delivery_update_10008(): string {
+  $database = \Drupal::database();
+  $schema = $database->schema();
+  $frozen = _beantragt_delivery_update_schema(10008);
+  foreach ($frozen['operational_fields'] as $name => $definition) {
+    if (!$schema->fieldExists('beantragt_delivery_log', $name)) {
+      $schema->addField('beantragt_delivery_log', $name, $definition);
+      if ($name === 'automatic_attempts') {
+        $database->update('beantragt_delivery_log')->expression('automatic_attempts', 'attempts')->execute();
+      }
+    }
+  }
+  $definition = $frozen['log'];
+  foreach (['payload_reference', 'scope_connection', 'replaces_uuid'] as $name) {
+    if (!$schema->indexExists('beantragt_delivery_log', $name)) {
+      $schema->addIndex('beantragt_delivery_log', $name, $definition['indexes'][$name], $definition);
+    }
+  }
+  if (!$schema->tableExists('beantragt_transfer_audit')) {
+    $schema->createTable('beantragt_transfer_audit', $frozen['audit']);
+  }
+  if (!$schema->fieldExists('beantragt_integration_assignment', 'send_attachments')) {
+    $schema->addField('beantragt_integration_assignment', 'send_attachments', $frozen['send_attachments']);
+    // Preserve the former all-attachments policy for existing definitions only.
+    $database->update('beantragt_integration_assignment')->fields(['send_attachments' => 1])->execute();
+  }
+  if (!\Drupal::state()->get('beantragt_delivery.attachment_policy_migrated', FALSE)) {
+    $rows = $database->select('beantragt_delivery_log', 'd')->fields('d', ['id', 'connection_snapshot'])->isNotNull('scope_group_id')->execute();
+    foreach ($rows as $row) {
+      $snapshot = json_decode($row->connection_snapshot ?? '', TRUE);
+      if (is_array($snapshot) && !array_key_exists('send_attachments', $snapshot)) {
+        $snapshot['send_attachments'] = TRUE;
+        $database->update('beantragt_delivery_log')->fields(['connection_snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR)])->condition('id', $row->id)->execute();
+      }
+    }
+    \Drupal::state()->set('beantragt_delivery.attachment_policy_migrated', TRUE);
+  }
+  if (!\Drupal::state()->get('beantragt_delivery.payload_context_migrated', FALSE)) {
+    \Drupal::service('beantragt_delivery.transfer_payload_repository')->migrateLegacyContext();
+    \Drupal::state()->set('beantragt_delivery.payload_context_migrated', TRUE);
+  }
+  \Drupal::service('beantragt_delivery.transfer_payload_repository')->cleanupAccepted();
+  \Drupal::state()->delete('beantragt_delivery.legacy_candidate_ids');
+  return 'Installed explicit transfer recovery, durable audit, attachment opt-in and authenticated payload contexts without enqueueing transfers.';
+}
+
+/**
+ * Adds durable, value-free planning intents without enqueueing applications.
+ */
+function beantragt_delivery_update_10009(): string {
+  $schema = \Drupal::database()->schema();
+  if (!$schema->tableExists('beantragt_transfer_plan')) {
+    $schema->createTable('beantragt_transfer_plan', _beantragt_delivery_update_schema(10009)['transfer_plan']);
+  }
+  return 'Installed durable planning intents; no transfer was created or enqueued.';
+}
+
+/**
+ * Adds display texts and the closure rule to integration connections.
+ */
+function beantragt_delivery_update_10010(): string {
+  $schema = \Drupal::database()->schema();
+  if ($schema->tableExists('beantragt_integration_connection') && !$schema->fieldExists('beantragt_integration_connection', 'presentation')) {
+    $schema->addField('beantragt_integration_connection', 'presentation', [
+      'type' => 'text',
+      'size' => 'normal',
+      'not null' => FALSE,
+    ]);
+  }
+  return 'Added connection presentation; existing connections keep closing on the decision notice.';
+}
+
+/**
+ * Marks external responses whose documents carry protected data.
+ */
+function beantragt_delivery_update_10011(): string {
+  $schema = \Drupal::database()->schema();
+  if ($schema->tableExists('beantragt_external_response') && !$schema->fieldExists('beantragt_external_response', 'contains_protected')) {
+    $schema->addField('beantragt_external_response', 'contains_protected', [
+      'type' => 'int',
+      'size' => 'tiny',
+      'unsigned' => TRUE,
+      'not null' => TRUE,
+      'default' => 0,
+    ]);
+  }
+  return 'Added the protected-data flag to external responses; existing responses stay unflagged.';
+}
+
+/**
+ * Flags provided docgen notices that carry protected data in clear text.
+ */
+function beantragt_delivery_update_10012(): string {
+  $database = \Drupal::database();
+  $schema = $database->schema();
+  if (!$schema->tableExists('beantragt_docgen_document') || !$schema->fieldExists('beantragt_external_response', 'contains_protected')) {
+    return 'No decision documents to check.';
+  }
+  $responses = [];
+  $rows = $database->select('beantragt_docgen_document', 'd')
+    ->fields('d', ['response_uuid', 'missing'])
+    ->isNotNull('d.response_uuid')
+    ->execute();
+  foreach ($rows as $row) {
+    $flags = json_decode((string) ($row->missing ?? ''), TRUE);
+    if (is_array($flags) && ($flags['protectedValues'] ?? FALSE) === TRUE) {
+      $responses[(string) $row->response_uuid] = TRUE;
+    }
+  }
+  if ($responses !== []) {
+    $database->update('beantragt_external_response')
+      ->fields(['contains_protected' => 1])
+      ->condition('uuid', array_keys($responses), 'IN')
+      ->execute();
+  }
+  return 'Flagged ' . count($responses) . ' provided decision notice(s) with protected data.';
+}
+
+/**
+ * Adds transfer triggers to assignments and trigger metadata to intents.
+ *
+ * Existing rules keep planning on submission, exactly as before.
+ */
+function beantragt_delivery_update_10013(): string {
+  $schema = \Drupal::database()->schema();
+  $frozen = _beantragt_delivery_update_schema(10013);
+  $tables = [
+    'beantragt_integration_assignment' => 'assignment_fields',
+    'beantragt_transfer_plan' => 'transfer_plan_fields',
+  ];
+  foreach ($tables as $table => $key) {
+    if (!$schema->tableExists($table)) {
+      continue;
+    }
+    foreach ($frozen[$key] as $name => $definition) {
+      if (!$schema->fieldExists($table, $name)) {
+        $schema->addField($table, $name, $definition);
+      }
+    }
+  }
+  return 'Added transfer triggers (default: on submission) and trigger metadata of planning intents.';
+}
+
+/**
+ * Adds outcome and kind to external responses.
+ *
+ * Existing responses stay decisions without outcome.
+ */
+function beantragt_delivery_update_10014(): string {
+  $schema = \Drupal::database()->schema();
+  if (!$schema->tableExists('beantragt_external_response')) {
+    return 'No external responses table.';
+  }
+  foreach (_beantragt_delivery_update_schema(10014)['external_response_fields'] as $name => $definition) {
+    if (!$schema->fieldExists('beantragt_external_response', $name)) {
+      $schema->addField('beantragt_external_response', $name, $definition);
+    }
+  }
+  return 'Added outcome and kind to external responses; existing responses stay decisions without outcome.';
+}
+
+/**
+ * Adds the case system's outcome label to external responses.
+ *
+ * Existing responses keep no label and show the generic outcome word.
+ */
+function beantragt_delivery_update_10015(): string {
+  $schema = \Drupal::database()->schema();
+  if (!$schema->tableExists('beantragt_external_response')) {
+    return 'No external responses table.';
+  }
+  foreach (_beantragt_delivery_update_schema(10015)['external_response_fields'] as $name => $definition) {
+    if (!$schema->fieldExists('beantragt_external_response', $name)) {
+      $schema->addField('beantragt_external_response', $name, $definition);
+    }
+  }
+  return 'Added the outcome label of the case system to external responses.';
+}
+
+/**
+ * Adds the per-response delivery evidence to external responses.
+ *
+ * Decision flag, effective route and its reason, the time of the email
+ * notice, and the postal dispatch due and handed over. Existing responses
+ * keep an empty route (no production data; demo updates are reinstalls).
+ */
+function beantragt_delivery_update_10016(): string {
+  $schema = \Drupal::database()->schema();
+  if (!$schema->tableExists('beantragt_external_response')) {
+    return 'No external responses table.';
+  }
+  foreach (_beantragt_delivery_update_schema(10016)['external_response_fields'] as $name => $definition) {
+    if (!$schema->fieldExists('beantragt_external_response', $name)) {
+      $schema->addField('beantragt_external_response', $name, $definition);
+    }
+  }
+  return 'Added the delivery route, decision flag and postal dispatch evidence to external responses.';
+}
+
+/**
+ * Protects existing FIT-Connect responses, including already released copies.
+ */
+function beantragt_delivery_update_10017(): string {
+  $database = \Drupal::database();
+  if (!$database->schema()->tableExists('beantragt_external_response')) {
+    return 'Protected 0 existing FIT-Connect responses (table absent).';
+  }
+  $count = $database->update('beantragt_external_response')
+    ->fields(['contains_protected' => 1])
+    ->condition('source', 'fit_connect')
+    ->condition('contains_protected', 0)
+    ->execute();
+  return sprintf('Protected %d existing FIT-Connect responses.', $count);
+}

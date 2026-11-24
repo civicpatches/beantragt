@@ -1,0 +1,64 @@
+<?php
+
+/**
+ * @file
+ * Beantragt Comment module.
+ *
+ * Provides a comment/message system for applications, enabling
+ * Rueckfragen (follow-up questions) from staff and replies from citizens.
+ */
+
+declare(strict_types=1);
+
+use Drupal\beantragt_comment\Entity\ApplicationCommentInterface;
+use Drupal\beantragt_application\Entity\ApplicationInterface;
+use Drupal\Core\Entity\EntityInterface;
+
+/**
+ * Implements hook_ENTITY_TYPE_insert() for application_comment.
+ *
+ * Sends notification emails when a comment is created:
+ * - Staff comment: notify citizen via application_comment_staff template.
+ * - Citizen comment: notify staff org email via application_comment_citizen
+ *   template.
+ *
+ * The mail templates are stored in beantragt_notification.mail config and
+ * processed by beantragt_notification_mail(). The comment module's install
+ * hook adds the templates there.
+ */
+function beantragt_comment_application_comment_insert(EntityInterface $entity): void {
+  if (!$entity instanceof ApplicationCommentInterface) {
+    return;
+  }
+
+  $application_id = $entity->getApplicationId();
+  if ($application_id === NULL) {
+    return;
+  }
+
+  $application = \Drupal::entityTypeManager()
+    ->getStorage('application')
+    ->load($application_id);
+
+  if (!$application instanceof ApplicationInterface) {
+    return;
+  }
+
+  /** @var \Drupal\beantragt_notification\Service\NotificationMailer $mailer */
+  $mailer = \Drupal::service('beantragt_notification.mailer');
+
+  if ($entity->isInternal()) {
+    return;
+  }
+
+  $author_role = $entity->getAuthorRole();
+
+  if ($author_role === 'staff') {
+    // Staff wrote a Rueckfrage: notify the citizen.
+    $mailer->sendCitizenNotification($application, 'application_comment_staff');
+  }
+  elseif ($author_role === 'citizen') {
+    // Citizen replied: notify the staff.
+    $mailer->sendStaffNotification($application, 'application_comment_citizen');
+  }
+}

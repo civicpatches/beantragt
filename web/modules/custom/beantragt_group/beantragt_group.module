@@ -1,0 +1,1597 @@
+<?php
+
+/**
+ * @file
+ * Beantragt Group module.
+ *
+ * Provides group-based access control for form schemas, applications, and
+ * applicants using the Group module.
+ */
+
+declare(strict_types=1);
+
+use Drupal\Component\Utility\Xss;
+use Drupal\Core\Access\AccessResult;
+use Drupal\Core\Access\AccessResultInterface;
+use Drupal\Core\Database\Query\AlterableInterface;
+use Drupal\Core\Database\Query\SelectInterface;
+use Drupal\Core\Entity\Display\EntityFormDisplayInterface;
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\EntityStorageException;
+use Drupal\Core\Entity\EntityTypeInterface;
+use Drupal\Core\Entity\FieldableEntityInterface;
+use Drupal\Core\Field\BaseFieldDefinition;
+use Drupal\Core\Field\EntityReferenceFieldItemListInterface;
+use Drupal\Core\Field\FieldDefinitionInterface;
+use Drupal\Core\Field\FieldItemListInterface;
+use Drupal\Core\Form\FormStateInterface;
+use Drupal\Core\Session\AccountInterface;
+use Drupal\beantragt_application\Access\ApplicationCaseScope;
+use Drupal\beantragt_application\Entity\ApplicationInterface;
+use Drupal\beantragt_group\Entity\Controller\AdminGroupListBuilder;
+use Drupal\beantragt_group\Plugin\Validation\Constraint\JurisdictionParentReferenceConstraint;
+use Drupal\beantragt_group\Plugin\Validation\Constraint\JurisdictionSettingsSafetyConstraint;
+use Drupal\beantragt_roles_api\BeantragtRoles;
+use Drupal\beantragt_group\Plugin\Validation\Constraint\OrgRootJurisdictionReferenceConstraint;
+use Drupal\beantragt_group\Plugin\Validation\Constraint\OrgParentReferenceConstraint;
+use Drupal\beantragt_group\Service\JsonApiGroupQueryAccess;
+use Drupal\beantragt_group\Service\WorkspaceInviteAccess;
+use Drupal\beantragt_schema\Entity\FormSchemaInterface;
+use Drupal\beantragt_schema\Routing\JsonApiRouteSubscriber;
+use Drupal\group\Entity\GroupInterface;
+use Drupal\group\Entity\GroupRelationshipInterface;
+use Drupal\group\Entity\GroupRelationshipTypeInterface;
+use Drupal\jsonapi\JsonApiFilter;
+use Drupal\jsonapi\Revisions\ResourceVersionRouteEnhancer;
+use Drupal\language\ConfigurableLanguageManagerInterface;
+use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
+
+/**
+ * Implements hook_entity_form_display_alter().
+ *
+ * Workspace edit forms intentionally expose every form-configurable field.
+ * This keeps new fields visible even before a persisted display is refreshed.
+ */
+function beantragt_group_entity_form_display_alter(
+  EntityFormDisplayInterface $form_display,
+  array $context,
+): void {
+  $entity_type_id = (string) ($context['entity_type'] ?? '');
+  $bundle = (string) ($context['bundle'] ?? '');
+  $form_mode = (string) ($context['form_mode'] ?? 'default');
+  if ($entity_type_id !== 'group' || $form_mode !== 'default') {
+    return;
+  }
+
+  \Drupal::service('beantragt_group.admin_form_display_completer')
+    ->complete($form_display, $entity_type_id, $bundle);
+}
+
+/**
+ * Implements hook_field_widget_single_element_form_alter().
+ *
+ * Custom CSS is source code, not rich text. Keep Drupal's real field widget
+ * while preventing CKEditor from treating CSS as Basic HTML.
+ */
+function beantragt_group_field_widget_single_element_form_alter(
+  array &$element,
+  FormStateInterface $form_state,
+  array $context,
+): void {
+  $field_definition = $context['items']->getFieldDefinition();
+  if (
+    $field_definition->getTargetEntityTypeId() === 'group'
+    && $field_definition->getName() === 'field_custom_css'
+    && ($element['#type'] ?? NULL) === 'text_format'
+  ) {
+    $element['#allowed_formats'] = ['plain_text'];
+  }
+}
+
+/**
+ * Implements hook_module_implements_alter().
+ */
+function beantragt_group_module_implements_alter(array &$implementations, string $hook): void {
+  if ($hook !== 'form_schema_presave' || !isset($implementations['beantragt_group'])) {
+    return;
+  }
+
+  // Scope fields, including the supported single-tenant default, must be
+  // normalized before context-source validation resolves the form workspace.
+  $implementation = $implementations['beantragt_group'];
+  unset($implementations['beantragt_group']);
+  $implementations = ['beantragt_group' => $implementation] + $implementations;
+}
+
+/**
+ * Implements hook_cron().
+ *
+ * Deletes invitation rows that expired more than 30 days ago so stale invitee
+ * email addresses are not retained indefinitely.
+ */
+function beantragt_group_cron(): void {
+  // Retention window for expired invitations, in seconds (30 days).
+  $retention_seconds = 2592000;
+
+  $database = \Drupal::database();
+  if (!$database->schema()->tableExists('beantragt_group_invitations')) {
+    return;
+  }
+
+  // Guard against concurrent cron runs (Drush cron + cron endpoint) deleting
+  // the same rows in parallel.
+  $lock = \Drupal::lock();
+  if (!$lock->acquire('beantragt_group_invite_cleanup', 30.0)) {
+    return;
+  }
+
+  try {
+    $cutoff = \Drupal::time()->getRequestTime() - $retention_seconds;
+    $total = 0;
+    // Delete in bounded chunks so a large backlog cannot lock the table for an
+    // extended period and stall concurrent invite creation or claims.
+    do {
+      $ids = $database->select('beantragt_group_invitations', 'i')
+        ->fields('i', ['id'])
+        ->condition('expires', $cutoff, '<')
+        ->range(0, 500)
+        ->execute()
+        ->fetchCol();
+      if ($ids === []) {
+        break;
+      }
+      $total += (int) $database->delete('beantragt_group_invitations')
+        ->condition('id', $ids, 'IN')
+        ->execute();
+    } while (count($ids) === 500);
+
+    if ($total > 0) {
+      \Drupal::logger('beantragt_group')->info('Deleted @count expired workspace invitations.', [
+        '@count' => $total,
+      ]);
+    }
+  }
+  finally {
+    $lock->release('beantragt_group_invite_cleanup');
+  }
+}
+
+/**
+ * Implements hook_mail().
+ */
+function beantragt_group_mail(string $key, array &$message, array $params): void {
+  if ($key !== 'workspace_invitation') {
+    return;
+  }
+
+  $langcode = $message['langcode'] ?? $params['langcode'] ?? 'de';
+  $mail_config = NULL;
+  $language_manager = \Drupal::languageManager();
+  if ($language_manager instanceof ConfigurableLanguageManagerInterface) {
+    $override = $language_manager->getLanguageConfigOverride($langcode, 'beantragt_group.mail');
+    $mail_config = $override->get($key);
+  }
+  if (empty($mail_config)) {
+    $mail_config = \Drupal::config('beantragt_group.mail')->get($key);
+  }
+  if (empty($mail_config)) {
+    $mail_config = [
+      'subject' => '@site_name: Invitation for @target_parent',
+      'body' => implode("\n\n", [
+        'Hello,',
+        'You have been invited to set up a workspace under "@target_parent" '
+        . 'on @site_name.',
+        "Open the following link to continue:\n@claim_url",
+        'This invitation is valid for @expires_in days.',
+        'If you did not expect this invitation, you can ignore this email.',
+      ]),
+    ];
+  }
+
+  // Strip CR/LF from values that flow into the subject line to prevent
+  // header injection through site name or jurisdiction labels.
+  $subject_replacements = [
+    '@site_name' => preg_replace('/[\r\n]/', '', (string) ($params['site_name'] ?? 'beantragt.ai')),
+    '@target_parent' => preg_replace('/[\r\n]/', '', (string) ($params['target_parent'] ?? '')),
+  ];
+  $body_replacements = [
+    '@site_name' => $params['site_name'] ?? 'beantragt.ai',
+    '@target_parent' => $params['target_parent'] ?? '',
+    '@claim_url' => $params['claim_url'] ?? '',
+    '@expires_in' => $params['expires_in'] ?? '7',
+  ];
+
+  $message['subject'] = strtr($mail_config['subject'], $subject_replacements);
+  $message['body'][] = strtr($mail_config['body'], $body_replacements);
+}
+
+/**
+ * Implements hook_entity_field_access().
+ */
+function beantragt_group_entity_field_access(
+  string $operation,
+  FieldDefinitionInterface $field_definition,
+  AccountInterface $account,
+  ?FieldItemListInterface $items = NULL,
+): AccessResultInterface {
+  // Core reads includes through field access, independently of collection SQL.
+  // Hide links and included groups outside the staff workspace selection.
+  if ($operation === 'view' && $items instanceof EntityReferenceFieldItemListInterface
+    && $field_definition->getSetting('target_type') === 'group') {
+    $access = AccessResult::neutral();
+    if (JsonApiRouteSubscriber::isJsonApiRoute(\Drupal::routeMatch()->getRouteObject())
+      && BeantragtRoles::isStaffAccount($account)
+      && !BeantragtRoles::isServiceAccount($account)
+      && !JsonApiGroupQueryAccess::isGroupAdministrator($account)
+      && !$account->hasPermission('bypass beantragt group scope')) {
+      /** @var \Drupal\beantragt_group\Service\JsonApiGroupQueryAccess $query_access */
+      $query_access = \Drupal::service('beantragt_group.jsonapi_group_query_access');
+      [, , $lookup] = $query_access->staffWorkspaceIds();
+      $references = array_map('intval', array_column($items->getValue(), 'target_id'));
+      $access = AccessResult::forbiddenIf(array_diff($references, $lookup) !== [])
+        ->addCacheContexts(['beantragt_jsonapi_workspace_scope']);
+    }
+    return $access->addCacheContexts(['route', 'user.permissions', 'user.roles']);
+  }
+
+  // The invite scope decides where an account may invite. The account itself
+  // must not move it, otherwise a scoped inviter could invite anywhere.
+  if ($operation === 'edit'
+    && $field_definition->getTargetEntityTypeId() === 'user'
+    && $field_definition->getName() === WorkspaceInviteAccess::SCOPE_FIELD) {
+    return AccessResult::forbiddenIf(
+      !$account->hasPermission('administer users') && !$account->hasPermission('administer beantragt groups'),
+      'Only user or group administrators may change the invite scope.',
+    )->cachePerPermissions();
+  }
+
+  if ($field_definition->getTargetEntityTypeId() !== 'group') {
+    return AccessResult::neutral();
+  }
+
+  $field_name = $field_definition->getName();
+  $api_managed_fields = _beantragt_group_api_managed_jurisdiction_fields();
+  $platform_admin = $account->hasPermission('administer group')
+    || $account->hasPermission('administer beantragt groups');
+  $allowed = $platform_admin
+    || $account->hasPermission('bypass beantragt group scope');
+
+  if ($operation === 'edit' && $field_name === 'field_retention_days'
+    && !$account->hasPermission('administer beantragt retention policies')) {
+    return AccessResult::forbidden('Changing retention settings requires the retention administration permission.')
+      ->cachePerPermissions();
+  }
+
+  if (in_array($field_name, $api_managed_fields, TRUE)) {
+    if ($operation === 'edit') {
+      return $platform_admin
+        ? AccessResult::allowed()->cachePerPermissions()
+        : AccessResult::forbidden('Jurisdiction settings are restricted to platform administrators.')->cachePerPermissions();
+    }
+
+    return $allowed
+      ? AccessResult::allowed()->cachePerPermissions()
+      : AccessResult::forbidden('Jurisdiction settings are admin-only.')->cachePerPermissions();
+  }
+
+  $admin_only_fields = [
+    'label',
+    'uid',
+    'status',
+    'field_directory_provider',
+    'field_directory_external_id',
+    'field_directory_dn',
+    'field_directory_parent_id',
+    'field_directory_sync_state',
+    'field_jurisdiction',
+    'field_parent_jurisdiction',
+    'field_parent_org',
+    'field_slug',
+    'field_reference_pattern',
+    'field_reference_prefix',
+    'field_retention_days',
+    'field_org_email',
+  ];
+  $sensitive_view_fields = [
+    'field_directory_provider',
+    'field_directory_external_id',
+    'field_directory_dn',
+    'field_directory_parent_id',
+    'field_directory_sync_state',
+    'field_org_email',
+  ];
+  $requires_admin = $operation === 'edit'
+    ? in_array($field_name, $admin_only_fields, TRUE)
+    : in_array($field_name, $sensitive_view_fields, TRUE);
+  if (!$requires_admin) {
+    return AccessResult::neutral();
+  }
+
+  return $allowed
+    ? AccessResult::allowed()->cachePerPermissions()
+    : AccessResult::forbidden('Workspace administration fields are admin-only.')->cachePerPermissions();
+}
+
+/**
+ * Returns jurisdiction fields owned by the validated settings API.
+ *
+ * @return string[]
+ *   Field machine names restricted to platform-wide administrators.
+ */
+function _beantragt_group_api_managed_jurisdiction_fields(): array {
+  return [
+    'field_custom_css',
+    'field_email_footer',
+    'field_jur_config',
+    'field_legal_notice',
+    'field_platform_name',
+    'field_privacy_policy',
+  ];
+}
+
+/**
+ * Implements hook_jsonapi_ENTITY_TYPE_filter_access() for group.
+ */
+function beantragt_group_jsonapi_group_filter_access(EntityTypeInterface $entity_type, AccountInterface $account): array {
+  $guarded = JsonApiRouteSubscriber::isCollectionRoute(\Drupal::routeMatch()->getRouteObject());
+  $administrator = $guarded && JsonApiGroupQueryAccess::isGroupAdministrator($account);
+  // Group's outsider role allows published groups independently of tenant
+  // membership. The query alter enforces the narrower collection scope.
+  return [
+    JsonApiFilter::AMONG_ALL => ($administrator ? AccessResult::allowed() : AccessResult::forbidden())
+      ->addCacheContexts(['route', 'user.permissions']),
+    JsonApiFilter::AMONG_PUBLISHED => AccessResult::allowedIf($guarded && $account->isAuthenticated()
+      && (BeantragtRoles::isServiceAccount($account) || BeantragtRoles::isStaffAccount($account)
+        || $account->hasPermission('bypass beantragt group scope')))
+      ->addCacheContexts(['route', 'user.roles', 'user.permissions']),
+  ];
+}
+
+/**
+ * Implements hook_jsonapi_entity_filter_access().
+ */
+function beantragt_group_jsonapi_entity_filter_access(EntityTypeInterface $entity_type, AccountInterface $account): array {
+  if (!JsonApiGroupQueryAccess::supportsTenantFilter($entity_type->id())) {
+    return [];
+  }
+
+  // The SQL guard intersects all matching aliases with view permissions and
+  // tenant scope before caller-supplied filters can affect their rows.
+  return [
+    JsonApiFilter::AMONG_ALL => (JsonApiRouteSubscriber::isCollectionRoute(\Drupal::routeMatch()->getRouteObject())
+      && JsonApiGroupQueryAccess::mayFilter($entity_type->id(), $account)
+      ? AccessResult::allowed() : AccessResult::forbidden())
+      ->addCacheContexts(['route', 'user.roles', 'user.permissions']),
+  ];
+}
+
+/**
+ * Implements hook_query_TAG_alter() for entity_query.
+ */
+function beantragt_group_query_entity_query_alter(AlterableInterface $query): void {
+  if ($query instanceof SelectInterface
+    && !$query->getMetaData('beantragt_group_workspace_subquery')
+    && $query->hasTag($query->getMetaData('entity_type') . '_access')
+    && JsonApiRouteSubscriber::isCollectionRoute(\Drupal::routeMatch()->getRouteObject())) {
+    /** @var \Drupal\beantragt_group\Service\JsonApiGroupQueryAccess $access */
+    $access = \Drupal::service('beantragt_group.jsonapi_group_query_access');
+    $access->alter($query, \Drupal::request()->attributes->get(ResourceVersionRouteEnhancer::WORKING_COPIES_REQUESTED) === TRUE);
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_access() for group.
+ *
+ * Group's own access handler is membership-oriented and can deny global
+ * administrators access to newly created workspaces they have not joined.
+ * Platform-wide administrators need a complete Drupal backstop for every
+ * jurisdiction and organisation, including seeded or externally provisioned
+ * groups.
+ */
+function beantragt_group_group_access(EntityInterface $entity, string $operation, AccountInterface $account): AccessResultInterface {
+  if (!in_array($operation, ['view', 'update', 'delete'], TRUE)) {
+    return AccessResult::neutral();
+  }
+
+  // Deleting a group is a structure write: product code or a platform
+  // administrator only, whatever group role the account holds.
+  if ($operation === 'delete') {
+    $structure_write = _beantragt_group_structure_write_access($account);
+    if ($structure_write->isForbidden()) {
+      return $structure_write;
+    }
+  }
+
+  $allowed = $account->hasPermission('administer group')
+    || $account->hasPermission('administer beantragt groups');
+
+  return $allowed
+    ? AccessResult::allowed()->cachePerPermissions()
+    : AccessResult::neutral()->cachePerPermissions();
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_create_access() for group.
+ */
+function beantragt_group_group_create_access(AccountInterface $account, array $context, string $entity_bundle): AccessResultInterface {
+  if (!in_array($entity_bundle, ['jur', 'org'], TRUE)) {
+    return AccessResult::neutral();
+  }
+
+  $allowed = $account->hasPermission('administer group')
+    || $account->hasPermission('administer beantragt groups');
+
+  return $allowed
+    ? AccessResult::allowed()->cachePerPermissions()
+    : AccessResult::neutral()->cachePerPermissions();
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_access() for group_relationship.
+ *
+ * A membership is changed or deleted only by product code or by a platform
+ * administrator (contract "memberships and groups are written only by
+ * product code"). Group's own pages, JSON:API and any other generic surface
+ * that asks this entity access get the same refusal. Product writers (grant
+ * service, invitation claim, demo login, seeds, the uid 1 helper) save
+ * through storage and are not affected. Reads are left alone.
+ *
+ * This policy deliberately leaves the Group leave form and Drupal's group
+ * edit and revert forms to their own access checks. The leave form uses the
+ * "leave group" permission so members can remove their own membership.
+ * Edit and revert operate on the group itself, outside membership writes.
+ */
+function beantragt_group_group_relationship_access(EntityInterface $entity, string $operation, AccountInterface $account): AccessResultInterface {
+  if (!$entity instanceof GroupRelationshipInterface
+    || $entity->getPluginId() !== 'group_membership'
+    || !in_array($operation, ['update', 'delete'], TRUE)) {
+    return AccessResult::neutral();
+  }
+  return _beantragt_group_structure_write_access($account);
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_create_access() for group_relationship.
+ *
+ * Creating a membership through a generic surface is refused like changing
+ * one. A forbidden result also keeps Group's own create check from running,
+ * which otherwise errors on JSON:API's empty context.
+ */
+function beantragt_group_group_relationship_create_access(AccountInterface $account, array $context, ?string $entity_bundle): AccessResultInterface {
+  $type = $entity_bundle === NULL ? NULL : \Drupal::entityTypeManager()->getStorage('group_relationship_type')->load($entity_bundle);
+  if (!$type instanceof GroupRelationshipTypeInterface || $type->getPluginId() !== 'group_membership') {
+    return AccessResult::neutral();
+  }
+  return _beantragt_group_structure_write_access($account);
+}
+
+/**
+ * The one decision on membership writes and group deletion.
+ *
+ * Forbidden for everyone except a platform administrator, defined as the
+ * JSON:API read gate defines it: the permission "administer site
+ * configuration". For a platform administrator it stays neutral, so Group's
+ * own rules apply as before; this widens nothing. It decides only where
+ * entity access is asked: create, update and delete of a membership, delete
+ * of a group. Leaving a group through Group's own leave form and editing or
+ * reverting a group do not ask it (see the hook above).
+ */
+function _beantragt_group_structure_write_access(AccountInterface $account): AccessResultInterface {
+  if ($account->hasPermission('administer site configuration')) {
+    return AccessResult::neutral()->cachePerPermissions();
+  }
+  return AccessResult::forbidden('Memberships and groups are written only by product code or a platform administrator.')
+    ->cachePerPermissions();
+}
+
+/**
+ * Implements hook_entity_base_field_info().
+ *
+ * Adds explicit jurisdiction and organisation scope fields.
+ */
+function beantragt_group_entity_base_field_info(EntityTypeInterface $entity_type): array {
+  $fields = [];
+
+  if (in_array($entity_type->id(), _beantragt_group_scoped_entity_type_ids(), TRUE)) {
+    $fields['field_jurisdiction'] = BaseFieldDefinition::create('entity_reference')
+      ->setLabel(t('Jurisdiction'))
+      ->setDescription(t('The jurisdiction or workspace this entity belongs to. This is the tenant and access-control boundary.'))
+      ->setSetting('target_type', 'group')
+      ->setSetting('handler', 'default:group')
+      ->setSetting('handler_settings', [
+        'target_bundles' => [
+          'jur' => 'jur',
+        ],
+        'sort' => [
+          'field' => 'label',
+          'direction' => 'ASC',
+        ],
+        'auto_create' => FALSE,
+      ])
+      ->setCardinality(1)
+      ->setRevisionable(TRUE)
+      ->setTranslatable(FALSE)
+      ->setDisplayOptions('form', [
+        'type' => 'entity_reference_autocomplete',
+        'weight' => 23,
+        'settings' => [
+          'match_operator' => 'CONTAINS',
+          'size' => '60',
+          'placeholder' => '',
+        ],
+      ])
+      ->setDisplayConfigurable('form', TRUE)
+      ->setDisplayOptions('view', [
+        'label' => 'inline',
+        'type' => 'entity_reference_label',
+        'weight' => 23,
+      ])
+      ->setDisplayConfigurable('view', TRUE);
+
+    $office_label = \Drupal::languageManager()->getCurrentLanguage()->getId() === 'de'
+      ? t('Dienststelle') : t('Organisation');
+    $fields['field_organisation'] = BaseFieldDefinition::create('entity_reference')
+      ->setLabel($office_label)
+      ->setDescription(t('The organisation or department responsible for this entity.'))
+      ->setSetting('target_type', 'group')
+      ->setSetting('handler', 'default:group')
+      ->setSetting('handler_settings', [
+        'target_bundles' => [
+          'org' => 'org',
+        ],
+        'sort' => [
+          'field' => 'label',
+          'direction' => 'ASC',
+        ],
+        'auto_create' => FALSE,
+      ])
+      ->setCardinality(1)
+      ->setRevisionable(TRUE)
+      ->setTranslatable(FALSE)
+      ->setDisplayOptions('form', [
+        'type' => 'entity_reference_autocomplete',
+        'weight' => 24,
+        'settings' => [
+          'match_operator' => 'CONTAINS',
+          'size' => '60',
+          'placeholder' => '',
+        ],
+      ])
+      ->setDisplayConfigurable('form', TRUE)
+      ->setDisplayOptions('view', [
+        'label' => 'inline',
+        'type' => 'entity_reference_label',
+        'weight' => 24,
+      ])
+      ->setDisplayConfigurable('view', TRUE);
+
+    $fields['field_group'] = BaseFieldDefinition::create('entity_reference')
+      ->setLabel(t('Group'))
+      ->setDescription(t('Compatibility scope field. Prefer field_jurisdiction and field_organisation for new code.'))
+      ->setSetting('target_type', 'group')
+      ->setSetting('handler', 'default:group')
+      ->setSetting('handler_settings', [
+        'target_bundles' => [
+          'jur' => 'jur',
+          'org' => 'org',
+        ],
+        'sort' => [
+          'field' => 'label',
+          'direction' => 'ASC',
+        ],
+        'auto_create' => FALSE,
+      ])
+      ->setCardinality(1)
+      ->setRevisionable(TRUE)
+      ->setTranslatable(FALSE)
+      ->setDisplayOptions('form', [
+        'type' => 'entity_reference_autocomplete',
+        'weight' => 25,
+        'settings' => [
+          'match_operator' => 'CONTAINS',
+          'size' => '60',
+          'placeholder' => '',
+        ],
+      ])
+      ->setDisplayConfigurable('form', TRUE)
+      ->setDisplayOptions('view', [
+        'label' => 'inline',
+        'type' => 'entity_reference_label',
+        'weight' => 25,
+      ])
+      ->setDisplayConfigurable('view', TRUE);
+
+    if (in_array($entity_type->id(), ['form_schema', 'form_schema_group'], TRUE)) {
+      foreach (['field_jurisdiction', 'field_organisation', 'field_group'] as $field_name) {
+        $fields[$field_name]->setSetting('handler', 'beantragt_form_workspace:group');
+      }
+    }
+
+    if ($entity_type->id() === 'application') {
+      foreach (['field_jurisdiction', 'field_organisation', 'field_group'] as $field_name) {
+        $fields[$field_name]->addConstraint('ApplicationTargetScope');
+      }
+    }
+  }
+
+  return $fields;
+}
+
+/**
+ * Returns entity type IDs that carry Beantragt group scope fields.
+ *
+ * @return string[]
+ *   Entity type IDs.
+ */
+function _beantragt_group_scoped_entity_type_ids(): array {
+  return ['form_schema', 'form_schema_group', 'application', 'applicant'];
+}
+
+/**
+ * Implements hook_entity_type_alter().
+ *
+ * Registers the tenant-boundary constraints on the group entity type. These
+ * constraints are enforced by entity form validation and the JSON:API write
+ * path. Raw programmatic group saves are guarded separately in
+ * beantragt_group_group_presave().
+ */
+function beantragt_group_entity_type_alter(array &$entity_types): void {
+  if (!isset($entity_types['group'])) {
+    return;
+  }
+
+  $entity_types['group']->setListBuilderClass(AdminGroupListBuilder::class);
+  $entity_types['group']->addConstraint('OrgRootJurisdictionReference');
+  $entity_types['group']->addConstraint('JurisdictionParentReference');
+  $entity_types['group']->addConstraint('OrgParentReference');
+  $entity_types['group']->addConstraint('JurisdictionSettingsSafety');
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_presave() for group.
+ *
+ * Catches raw programmatic group saves that bypass form and JSON:API
+ * validation. Only the Beantragt boundary and settings constraints are
+ * evaluated; the full group constraint set is intentionally not run here to
+ * keep ordinary saves cheap.
+ *
+ * Skipped during config synchronisation: a `drush cim` run must not be halted
+ * by pre-existing data that violates the tenant-boundary constraints. Run
+ * `drush entity:validate group` before deploying to surface such data.
+ */
+function beantragt_group_group_presave(EntityInterface $group): void {
+  if (!$group instanceof GroupInterface) {
+    return;
+  }
+
+  _beantragt_group_sanitize_jurisdiction_html($group);
+
+  if (\Drupal::isConfigSyncing()) {
+    return;
+  }
+
+  $jurisdiction_group_type = (string) (\Drupal::config('beantragt_group.settings')
+    ->get('jurisdiction_group_type') ?: 'jur');
+  if (!in_array($group->bundle(), [$jurisdiction_group_type, 'org'], TRUE)) {
+    return;
+  }
+
+  $constraints = [
+    new OrgRootJurisdictionReferenceConstraint(),
+    new JurisdictionParentReferenceConstraint(),
+    new OrgParentReferenceConstraint(),
+    new JurisdictionSettingsSafetyConstraint(),
+  ];
+
+  $typed_validator = \Drupal::typedDataManager()->getValidator();
+  $messages = [];
+  foreach (array_keys($group->getTranslationLanguages()) as $langcode) {
+    $translation = $group->getTranslation($langcode);
+    $typed_data = $translation->getTypedData();
+    foreach ($constraints as $constraint) {
+      foreach ($typed_validator->validate($typed_data, $constraint) as $violation) {
+        $messages[] = $violation->getPropertyPath() . ': ' . $violation->getMessage();
+      }
+    }
+  }
+
+  if ($messages !== []) {
+    throw new EntityStorageException(implode(' ', array_values(array_unique($messages))));
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_insert() for groups.
+ */
+function beantragt_group_group_insert(GroupInterface $group): void {
+  _beantragt_group_log_org_retention_change($group);
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_update() for groups.
+ */
+function beantragt_group_group_update(GroupInterface $group): void {
+  _beantragt_group_log_org_retention_change($group);
+}
+
+/**
+ * Logs changes to the stored organisation retention policy.
+ */
+function _beantragt_group_log_org_retention_change(GroupInterface $group): void {
+  if ($group->bundle() !== 'org' || !$group->hasField('field_retention_days')) {
+    return;
+  }
+
+  $original = $group->getOriginal();
+  $old = $original instanceof GroupInterface
+    ? ($original->getUntranslated()->get('field_retention_days')->value ?? NULL)
+    : NULL;
+  $new = $group->getUntranslated()->get('field_retention_days')->value ?? NULL;
+  if ((string) $old !== (string) $new) {
+    \Drupal::logger('beantragt_group')->notice('User @uid changed retention for organisation @id from @old to @new.', [
+      '@uid' => \Drupal::currentUser()->id(),
+      '@id' => $group->id(),
+      '@old' => $old === NULL ? 'inherit' : (int) $old,
+      '@new' => $new === NULL ? 'inherit' : (int) $new,
+    ]);
+  }
+}
+
+/**
+ * Sanitizes public jurisdiction HTML on every entity write path.
+ */
+function _beantragt_group_sanitize_jurisdiction_html(GroupInterface $group): void {
+  if (!$group->hasField('field_jur_config')) {
+    return;
+  }
+
+  $source = $group->getUntranslated();
+  foreach (['field_legal_notice', 'field_privacy_policy'] as $field_name) {
+    if (!$source->hasField($field_name) || $source->get($field_name)->isEmpty()) {
+      continue;
+    }
+
+    $value = (string) ($source->get($field_name)->value ?? '');
+    $filtered = Xss::filterAdmin($value);
+    if ($filtered !== $value) {
+      $source->get($field_name)->value = $filtered;
+    }
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_presave() for form_schema.
+ */
+function beantragt_group_form_schema_presave(EntityInterface $entity): void {
+  _beantragt_group_normalize_scope_fields($entity);
+  if ($entity instanceof FormSchemaInterface) {
+    $entity->fenceNormalizedWorkspaceScope();
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_presave() for form_schema_group.
+ */
+function beantragt_group_form_schema_group_presave(EntityInterface $entity): void {
+  if ($entity->hasField('field_schemas') && !$entity->get('field_schemas')->isEmpty()) {
+    $schemas = $entity->get('field_schemas')->referencedEntities();
+    $first_schema = reset($schemas);
+
+    if ($first_schema instanceof EntityInterface
+      && _beantragt_group_entity_scope_is_empty($entity)) {
+      _beantragt_group_copy_scope_from_schema($entity, $first_schema, TRUE);
+    }
+  }
+
+  _beantragt_group_normalize_scope_fields($entity);
+
+  if (isset($schemas)) {
+    _beantragt_group_assert_related_schemas_share_scope($entity, $schemas);
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_presave() for application.
+ */
+function beantragt_group_application_presave(EntityInterface $entity): void {
+  if ($entity->hasField('field_schema') && !$entity->get('field_schema')->isEmpty()) {
+    $schema = $entity->get('field_schema')->entity;
+    if ($schema instanceof EntityInterface) {
+      _beantragt_group_copy_scope_from_schema($entity, $schema);
+    }
+  }
+
+  if ($entity instanceof ApplicationInterface) {
+    _beantragt_group_assert_application_target_scope_authorized($entity);
+  }
+
+  _beantragt_group_normalize_scope_fields($entity);
+
+  // Normalization may add scope from field_group or the configured default.
+  // Re-check the final values so validation-skipping save paths cannot acquire
+  // an unauthorized target after the first guard has already run.
+  //
+  // Invariant: this post-check only covers scope mutated by THIS hook's
+  // normalizer. A future hook_ENTITY_TYPE_presave('application') ordered AFTER
+  // beantragt_group (equal-weight hooks sort by module name, so e.g.
+  // beantragt_workflow runs later) that mutates field_jurisdiction,
+  // field_organisation or field_group would NOT be re-checked here and must
+  // either run before this hook or re-assert authorization itself.
+  if ($entity instanceof ApplicationInterface) {
+    _beantragt_group_assert_application_target_scope_authorized($entity);
+
+    /** @var \Drupal\beantragt_application\Service\ApplicantScopeMutationLock $scope_lock */
+    $scope_lock = \Drupal::service('beantragt_application.applicant_scope_mutation_lock');
+    if (!$scope_lock->acquireForApplication($entity)) {
+      throw new EntityStorageException('The applicant scope is currently being deleted.');
+    }
+    // SqlContentEntityStorage starts its transaction before presave hooks.
+    $scope_lock->release($entity);
+  }
+}
+
+/**
+ * Rejects an application target scope the acting user may not manage.
+ *
+ * Only isNew() and isSyncing() applications are exempt (handled inside the
+ * authorization service). A legitimate system/cron/queue scope change running
+ * as anonymous/system (uid 0) would therefore fail closed with an uncaught
+ * AccessDeniedHttpException. Today no system path re-homes an application
+ * (RetentionCleanupService only deletes; the workflow router touches only
+ * assignment fields), so this never fires for automation. Before the
+ * GDPR/retention re-save work introduces a system scope change, add an
+ * explicit exemption (a bypass permission or an account-context switch) and
+ * catch the exception in the queue/cron caller.
+ */
+function _beantragt_group_assert_application_target_scope_authorized(ApplicationInterface $application): void {
+  /** @var \Drupal\beantragt_group\Service\ApplicationScopeAuthorizationInterface $scope_authorization */
+  $scope_authorization = \Drupal::service('beantragt_group.application_scope_authorization');
+  if ($scope_authorization->findUnauthorizedTarget($application, \Drupal::currentUser()) !== NULL) {
+    throw new AccessDeniedHttpException('You are not authorized to move this application into the selected tenant scope.');
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_presave() for applicant.
+ */
+function beantragt_group_applicant_presave(EntityInterface $entity): void {
+  _beantragt_group_normalize_scope_fields($entity);
+
+  if (!$entity instanceof FieldableEntityInterface) {
+    return;
+  }
+
+  /** @var \Drupal\beantragt_application\Service\ApplicantScopeMutationLock $scope_lock */
+  $scope_lock = \Drupal::service('beantragt_application.applicant_scope_mutation_lock');
+  if (!$scope_lock->hasTenantScopeForApplicant($entity)) {
+    throw new EntityStorageException('The applicant cannot be saved without a jurisdiction scope.');
+  }
+  $has_email = $entity->hasField('field_email')
+    && !$entity->get('field_email')->isEmpty();
+  if ($has_email && !$scope_lock->hasLockableIdentityForApplicant($entity)) {
+    throw new EntityStorageException('The applicant scope lock cannot be derived from the email address.');
+  }
+  if (!$scope_lock->acquireForApplicant($entity)) {
+    throw new EntityStorageException('The applicant scope lock is unavailable because another mutation is in progress.');
+  }
+  // SqlContentEntityStorage starts its transaction before presave hooks.
+  $scope_lock->release($entity);
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_access() for form_schema.
+ *
+ * Adds group-aware access checks: users can only view/edit/delete
+ * form schemas that belong to a group they are a member of.
+ * Entities without a group assignment are accessible to anyone
+ * with the appropriate base permission.
+ */
+function beantragt_group_form_schema_access(EntityInterface $entity, string $operation, AccountInterface $account): AccessResultInterface {
+  return _beantragt_group_entity_group_access($entity, $operation, $account);
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_access() for form_schema_group.
+ */
+function beantragt_group_form_schema_group_access(EntityInterface $entity, string $operation, AccountInterface $account): AccessResultInterface {
+  return _beantragt_group_entity_group_access($entity, $operation, $account);
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_access() for application.
+ *
+ * Checks the application scope and both scopes of historical revisions.
+ */
+function beantragt_group_application_access(EntityInterface $entity, string $operation, AccountInterface $account): AccessResultInterface {
+  $access = _beantragt_group_entity_group_access($entity, $operation, $account);
+  if ($access instanceof AccessResult) {
+    $access->cachePerUser()->addCacheTags(ApplicationCaseScope::cacheTags($account));
+  }
+  if ($operation === 'view' && $entity instanceof ApplicationInterface && !$entity->isNew()) {
+    $current = \Drupal::entityTypeManager()->getStorage('application')->loadUnchanged($entity->id());
+    if ($current instanceof ApplicationInterface
+      && (int) $current->getRevisionId() !== (int) $entity->getRevisionId()) {
+      // A historical grant never revives access lost on the current case.
+      // The historical scope is still checked by $access above.
+      $current_access = $current->access('view', $account, TRUE);
+      if ($access instanceof AccessResult) {
+        $access->addCacheableDependency($current_access)->addCacheableDependency($current)->setCacheMaxAge(0);
+      }
+      if (!$current_access->isAllowed()) {
+        return AccessResult::forbidden('Current application access is required for revision reads.')
+          ->addCacheableDependency($access);
+      }
+    }
+  }
+  return $access;
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_access() for applicant.
+ *
+ * Prevents cross-org PII leaks by scoping applicants to the group
+ * they belong to. Users can only access applicants within their own group.
+ */
+function beantragt_group_applicant_access(EntityInterface $entity, string $operation, AccountInterface $account): AccessResultInterface {
+  return _beantragt_group_entity_group_access($entity, $operation, $account);
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_access() for workflow_status.
+ *
+ * Workflow statuses are configuration-like entities, but each definition is
+ * owned by one organisation. Keep direct JSON:API reads and writes scoped to
+ * that owning group; the Nuxt service-account routes perform an additional
+ * current-user workspace access check before using their elevated credentials.
+ */
+function beantragt_group_workflow_status_access(EntityInterface $entity, string $operation, AccountInterface $account): AccessResultInterface {
+  return _beantragt_group_entity_group_access($entity, $operation, $account);
+}
+
+/**
+ * Shared group access logic for scoped entities.
+ *
+ * Returns neutral (defers to the entity's own access handler) if:
+ * - The entity has no group scope fields.
+ * - All scope fields are empty on an entity type that can be unscoped.
+ * - The user is a member of the effective scope group.
+ * - The user has explicit Beantragt group-scope bypass permission.
+ *
+ * Returns forbidden if the entity belongs to a scope and the user is not a
+ * member of that effective scope. Organisation scope wins over jurisdiction
+ * scope because it is the narrower responsibility boundary.
+ *
+ * @param \Drupal\Core\Entity\EntityInterface $entity
+ *   The entity being accessed.
+ * @param string $operation
+ *   The operation (view, update, delete).
+ * @param \Drupal\Core\Session\AccountInterface $account
+ *   The user account.
+ *
+ * @return \Drupal\Core\Access\AccessResultInterface
+ *   The access result.
+ */
+function _beantragt_group_entity_group_access(EntityInterface $entity, string $operation, AccountInterface $account): AccessResultInterface {
+  if ($account->hasPermission('bypass beantragt group scope')) {
+    return AccessResult::neutral()->cachePerPermissions();
+  }
+
+  $scope = _beantragt_group_entity_effective_access_scope($entity);
+
+  // No scope fields or empty scope: defer only for entities that may be global.
+  if ($scope === NULL) {
+    if (in_array($entity->getEntityTypeId(), ['application', 'applicant', 'form_schema', 'form_schema_group'], TRUE)) {
+      return AccessResult::forbidden('Entity has no tenant scope.')
+        ->addCacheableDependency($entity)
+        ->cachePerPermissions()
+        ->cachePerUser();
+    }
+    return AccessResult::neutral()
+      ->addCacheableDependency($entity)
+      ->cachePerPermissions();
+  }
+
+  $group_storage = \Drupal::entityTypeManager()->getStorage('group');
+  $group = $group_storage->load($scope['group_id']);
+  if (!$group) {
+    return AccessResult::forbidden('Entity references a missing scope group.')
+      ->addCacheableDependency($entity)
+      ->cachePerPermissions()
+      ->cachePerUser();
+  }
+  if (($scope['type'] === 'org' && $group->bundle() !== 'org')
+    || ($scope['type'] === 'jur' && $group->bundle() !== 'jur')) {
+    return AccessResult::forbidden('Entity references an invalid scope group bundle.')
+      ->addCacheableDependency($entity)
+      ->addCacheableDependency($group)
+      ->cachePerPermissions()
+      ->cachePerUser();
+  }
+
+  if (_beantragt_group_is_public_form_schema_service_account_view($entity, $operation, $account)) {
+    return AccessResult::neutral()
+      ->addCacheableDependency($entity)
+      ->addCacheableDependency($group)
+      ->cachePerPermissions()
+      ->cachePerUser();
+  }
+
+  if (_beantragt_group_is_application_owner_view($entity, $operation, $account)) {
+    return AccessResult::neutral()
+      ->addCacheableDependency($entity)
+      ->addCacheableDependency($group)
+      ->cachePerPermissions()
+      ->cachePerUser();
+  }
+
+  $requires_group_admin_write = _beantragt_group_operation_requires_group_admin_write(
+    $entity->getEntityTypeId(),
+    $operation,
+  );
+
+  $membership = $group->getMember($account);
+  if ($membership
+    && $entity->getEntityTypeId() === 'application'
+    && in_array($operation, ['update', 'edit', 'delete'], TRUE)
+    && ApplicationCaseScope::isOfficeCaseWorker($scope['type'], $account, array_keys($membership->getRoles(FALSE)))) {
+    $requires_group_admin_write = FALSE;
+  }
+
+  if ($membership && (!$requires_group_admin_write || _beantragt_group_account_has_group_admin_role($group, $account))) {
+    return AccessResult::neutral()
+      ->addCacheableDependency($entity)
+      ->addCacheableDependency($group)
+      ->cachePerPermissions()
+      ->cachePerUser();
+  }
+
+  $jurisdiction = NULL;
+  if (($scope['type'] ?? NULL) === 'org' && $group instanceof GroupInterface) {
+    $jurisdiction_id = (int) $group->get('field_jurisdiction')->target_id;
+    if ($jurisdiction_id > 0
+      && (!$entity instanceof ApplicationInterface
+        || ApplicationCaseScope::matchesRecordedJurisdiction($entity, $jurisdiction_id))) {
+      $jurisdiction = $group_storage->load($jurisdiction_id);
+      if ($jurisdiction instanceof GroupInterface && $jurisdiction->bundle() === 'jur'
+        && _beantragt_group_account_has_group_admin_role($jurisdiction, $account)) {
+        return AccessResult::neutral()
+          ->addCacheableDependency($entity)
+          ->addCacheableDependency($group)
+          ->addCacheableDependency($jurisdiction)
+          ->cachePerPermissions()
+          ->cachePerUser();
+      }
+    }
+  }
+
+  $result = AccessResult::forbidden('User is not a member of the effective entity scope.')
+    ->addCacheableDependency($entity)
+    ->addCacheableDependency($group)
+    ->cachePerPermissions()
+    ->cachePerUser();
+  if ($jurisdiction) {
+    $result->addCacheableDependency($jurisdiction);
+  }
+  return $result;
+}
+
+/**
+ * Returns TRUE when a scoped write must be backed by a group admin role.
+ */
+function _beantragt_group_operation_requires_group_admin_write(string $entity_type_id, string $operation): bool {
+  if (!in_array($operation, ['update', 'edit', 'delete'], TRUE)) {
+    return FALSE;
+  }
+
+  return in_array($entity_type_id, [
+    'application',
+    'applicant',
+    'form_schema',
+    'form_schema_group',
+    'workflow_status',
+  ], TRUE);
+}
+
+/**
+ * Allows the trusted Nuxt service account to proxy public internet forms.
+ */
+function _beantragt_group_is_public_form_schema_service_account_view(EntityInterface $entity, string $operation, AccountInterface $account): bool {
+  if ($operation !== 'view'
+    || !$entity instanceof FormSchemaInterface
+    || !BeantragtRoles::isServiceAccount($account)
+    || !$entity->isPublished()
+    || $entity->getSchemaStatus() !== 'published') {
+    return FALSE;
+  }
+
+  return $entity->getPublicationScope() === 'internet';
+}
+
+/**
+ * Allows citizen owners to reach the application entity access handler.
+ *
+ * Group scope still validates that the application references an existing
+ * tenant scope. The final allow/deny decision stays in
+ * ApplicationAccessControlHandler, which requires "view own application
+ * entities" for this owner path.
+ */
+function _beantragt_group_is_application_owner_view(EntityInterface $entity, string $operation, AccountInterface $account): bool {
+  if ($operation !== 'view'
+    || !$entity instanceof ApplicationInterface
+    || (int) $account->id() <= 0
+    || BeantragtRoles::isServiceAccount($account)) {
+    return FALSE;
+  }
+  if ((int) $account->id() === (int) $entity->getOwnerId()) {
+    return TRUE;
+  }
+  if (!\Drupal::hasService('beantragt_application.confirmed_mailbox')) {
+    return FALSE;
+  }
+
+  /** @var \Drupal\beantragt_application\Service\ConfirmedApplicationMailbox $mailbox */
+  $mailbox = \Drupal::service('beantragt_application.confirmed_mailbox');
+  return $mailbox->allowsRead($entity, $account);
+}
+
+/**
+ * Returns TRUE if the account has the admin role for a group membership.
+ *
+ * @param object $group
+ *   The group entity.
+ * @param \Drupal\Core\Session\AccountInterface $account
+ *   The user account.
+ */
+function _beantragt_group_account_has_group_admin_role(object $group, AccountInterface $account): bool {
+  $membership = $group->getMember($account);
+  return $membership && ApplicationCaseScope::hasAdminGroupRole($membership->getRoles(FALSE));
+}
+
+/**
+ * Ensures grouped schemas stay inside the group's tenant scope.
+ *
+ * @param \Drupal\Core\Entity\EntityInterface $entity
+ *   The form schema group entity.
+ * @param \Drupal\Core\Entity\EntityInterface[] $schemas
+ *   Referenced form schema entities.
+ */
+function _beantragt_group_assert_related_schemas_share_scope(EntityInterface $entity, array $schemas): void {
+  if (!_beantragt_group_entity_has_scope_fields($entity)) {
+    return;
+  }
+
+  $reference_scope = _beantragt_group_entity_effective_access_scope($entity);
+  if (!$reference_scope) {
+    $first_schema = reset($schemas);
+    $reference_scope = $first_schema instanceof EntityInterface
+      ? _beantragt_group_entity_effective_access_scope($first_schema)
+      : NULL;
+  }
+  if (!$reference_scope) {
+    throw new EntityStorageException(sprintf(
+      'Form schema group %s references schemas without a tenant scope.',
+      $entity->id() ?: 'new',
+    ));
+  }
+
+  foreach ($schemas as $schema) {
+    if (!$schema instanceof EntityInterface || !_beantragt_group_entity_has_scope_fields($schema)) {
+      continue;
+    }
+
+    $schema_scope = _beantragt_group_entity_effective_access_scope($schema);
+    if ((!$reference_scope && $schema_scope)
+      || ($reference_scope
+        && (!$schema_scope
+          || $schema_scope['type'] !== $reference_scope['type']
+          || $schema_scope['group_id'] !== $reference_scope['group_id']))) {
+      throw new EntityStorageException(sprintf(
+        'Form schema group %s references schema %s from another tenant scope.',
+        $entity->id() ?: 'new',
+        $schema->id() ?: 'new',
+      ));
+    }
+  }
+}
+
+/**
+ * Copies scope fields from the referenced form schema to an application.
+ *
+ * @param \Drupal\Core\Entity\EntityInterface $entity
+ *   The application entity.
+ * @param \Drupal\Core\Entity\EntityInterface $schema
+ *   The referenced form schema entity.
+ * @param bool $overwrite
+ *   Whether existing application field values should be overwritten.
+ */
+function _beantragt_group_copy_scope_from_schema(EntityInterface $entity, EntityInterface $schema, bool $overwrite = FALSE): void {
+  foreach (['field_jurisdiction', 'field_organisation', 'field_group'] as $field_name) {
+    if (!$entity->hasField($field_name)
+      || !$schema->hasField($field_name)) {
+      continue;
+    }
+    if ($overwrite && $schema->get($field_name)->isEmpty()) {
+      $entity->set($field_name, NULL);
+      continue;
+    }
+    if ($schema->get($field_name)->isEmpty()) {
+      continue;
+    }
+    if (!$overwrite && !$entity->get($field_name)->isEmpty()) {
+      continue;
+    }
+
+    $entity->set($field_name, $schema->get($field_name)->getValue());
+  }
+}
+
+/**
+ * Normalizes explicit scope fields and the legacy field_group value.
+ *
+ * @param \Drupal\Core\Entity\EntityInterface $entity
+ *   The scoped entity.
+ *
+ * @return bool
+ *   TRUE if any field value was changed.
+ */
+function _beantragt_group_normalize_scope_fields(EntityInterface $entity): bool {
+  $changed = FALSE;
+
+  if (!_beantragt_group_entity_has_scope_fields($entity)) {
+    return FALSE;
+  }
+
+  $group_storage = \Drupal::entityTypeManager()->getStorage('group');
+
+  if (_beantragt_group_entity_scope_is_empty($entity)
+    && _beantragt_group_apply_single_tenant_default_scope($entity)) {
+    $changed = TRUE;
+  }
+
+  if ($entity->hasField('field_group') && !$entity->get('field_group')->isEmpty()) {
+    $group_id = (int) $entity->get('field_group')->target_id;
+    $group = $group_id > 0 ? $group_storage->load($group_id) : NULL;
+    if ($group) {
+      if ($group->bundle() === 'jur'
+        && $entity->hasField('field_jurisdiction')
+        && $entity->get('field_jurisdiction')->isEmpty()) {
+        $entity->set('field_jurisdiction', ['target_id' => $group_id]);
+        $changed = TRUE;
+      }
+      elseif ($group->bundle() === 'org'
+        && $entity->hasField('field_organisation')
+        && $entity->get('field_organisation')->isEmpty()) {
+        $entity->set('field_organisation', ['target_id' => $group_id]);
+        $changed = TRUE;
+
+        if ($entity->hasField('field_jurisdiction')
+          && $entity->get('field_jurisdiction')->isEmpty()
+          && $group->hasField('field_jurisdiction')
+          && !$group->get('field_jurisdiction')->isEmpty()) {
+          $entity->set('field_jurisdiction', $group->get('field_jurisdiction')->getValue());
+          $changed = TRUE;
+        }
+      }
+    }
+  }
+
+  if ($entity->hasField('field_organisation') && !$entity->get('field_organisation')->isEmpty()) {
+    $org_id = (int) $entity->get('field_organisation')->target_id;
+    $org = $org_id > 0 ? $group_storage->load($org_id) : NULL;
+    if ($org && $org->bundle() === 'org') {
+      $org_jurisdiction_id = ($org->hasField('field_jurisdiction') && !$org->get('field_jurisdiction')->isEmpty())
+        ? (int) $org->get('field_jurisdiction')->target_id
+        : NULL;
+      $entity_jurisdiction_id = _beantragt_group_entity_jurisdiction_id($entity);
+
+      if ($org_jurisdiction_id !== NULL
+        && $entity_jurisdiction_id !== NULL
+        && $org_jurisdiction_id !== $entity_jurisdiction_id) {
+        throw new EntityStorageException(sprintf(
+          'Entity %s:%s has organisation %d in jurisdiction %d but entity jurisdiction is %d.',
+          $entity->getEntityTypeId(),
+          $entity->id() ?? 'new',
+          $org_id,
+          $org_jurisdiction_id,
+          $entity_jurisdiction_id
+        ));
+      }
+      if ($org_jurisdiction_id === NULL) {
+        throw new EntityStorageException(sprintf(
+          'Entity %s:%s references organisation %d without jurisdiction.',
+          $entity->getEntityTypeId(),
+          $entity->id() ?? 'new',
+          $org_id
+        ));
+      }
+
+      if ($entity->hasField('field_jurisdiction')
+        && $entity->get('field_jurisdiction')->isEmpty()) {
+        $entity->set('field_jurisdiction', $org->get('field_jurisdiction')->getValue());
+        $changed = TRUE;
+      }
+
+      if ($entity->hasField('field_group')
+        && ((int) ($entity->get('field_group')->target_id ?? 0)) !== $org_id) {
+        $entity->set('field_group', ['target_id' => $org_id]);
+        $changed = TRUE;
+      }
+    }
+    elseif ($org_id > 0) {
+      throw new EntityStorageException(sprintf(
+        'Entity %s:%s references invalid organisation group %d.',
+        $entity->getEntityTypeId(),
+        $entity->id() ?? 'new',
+        $org_id
+      ));
+    }
+  }
+  elseif ($entity->hasField('field_jurisdiction') && !$entity->get('field_jurisdiction')->isEmpty()) {
+    $jur_id = (int) $entity->get('field_jurisdiction')->target_id;
+    if ($entity->hasField('field_group')
+      && ((int) ($entity->get('field_group')->target_id ?? 0)) !== $jur_id) {
+      $entity->set('field_group', ['target_id' => $jur_id]);
+      $changed = TRUE;
+    }
+  }
+
+  return $changed;
+}
+
+/**
+ * Returns TRUE when none of the scope fields has a value.
+ */
+function _beantragt_group_entity_scope_is_empty(EntityInterface $entity): bool {
+  foreach (['field_jurisdiction', 'field_organisation', 'field_group'] as $field_name) {
+    if ($entity->hasField($field_name) && !$entity->get($field_name)->isEmpty()) {
+      return FALSE;
+    }
+  }
+
+  return TRUE;
+}
+
+/**
+ * Applies the configured demo default scope, with single-tenant fallback.
+ *
+ * @param \Drupal\Core\Entity\EntityInterface $entity
+ *   The scoped entity.
+ *
+ * @return bool
+ *   TRUE if a default scope was applied.
+ */
+function _beantragt_group_apply_single_tenant_default_scope(EntityInterface $entity): bool {
+  $group_storage = \Drupal::entityTypeManager()->getStorage('group');
+  $config = \Drupal::config('beantragt_group.settings');
+
+  $default_org_slug = (string) ($config->get('default_organisation_slug') ?? '');
+  if ($default_org_slug !== '' && $entity->hasField('field_organisation')) {
+    foreach ($group_storage->loadByProperties(['type' => 'org']) as $org) {
+      if (!$org->hasField('field_slug')
+        || $org->get('field_slug')->isEmpty()
+        || (string) $org->get('field_slug')->value !== $default_org_slug) {
+        continue;
+      }
+
+      $entity->set('field_organisation', ['target_id' => $org->id()]);
+      if ($entity->hasField('field_group')) {
+        $entity->set('field_group', ['target_id' => $org->id()]);
+      }
+      if ($entity->hasField('field_jurisdiction')
+        && $org->hasField('field_jurisdiction')
+        && !$org->get('field_jurisdiction')->isEmpty()) {
+        $entity->set('field_jurisdiction', $org->get('field_jurisdiction')->getValue());
+      }
+      return TRUE;
+    }
+  }
+
+  $default_jurisdiction_slug = (string) ($config->get('default_jurisdiction_slug') ?? '');
+  if ($default_jurisdiction_slug !== '' && $entity->hasField('field_jurisdiction')) {
+    foreach ($group_storage->loadByProperties(['type' => 'jur']) as $jurisdiction) {
+      if (!$jurisdiction->hasField('field_slug')
+        || $jurisdiction->get('field_slug')->isEmpty()
+        || (string) $jurisdiction->get('field_slug')->value !== $default_jurisdiction_slug) {
+        continue;
+      }
+
+      $entity->set('field_jurisdiction', ['target_id' => $jurisdiction->id()]);
+      if ($entity->hasField('field_group')) {
+        $entity->set('field_group', ['target_id' => $jurisdiction->id()]);
+      }
+      return TRUE;
+    }
+  }
+
+  $orgs = $group_storage->loadByProperties(['type' => 'org']);
+  if (count($orgs) === 1 && $entity->hasField('field_organisation')) {
+    $org = reset($orgs);
+    $entity->set('field_organisation', ['target_id' => $org->id()]);
+    if ($entity->hasField('field_group')) {
+      $entity->set('field_group', ['target_id' => $org->id()]);
+    }
+    if ($entity->hasField('field_jurisdiction')
+      && $org->hasField('field_jurisdiction')
+      && !$org->get('field_jurisdiction')->isEmpty()) {
+      $entity->set('field_jurisdiction', $org->get('field_jurisdiction')->getValue());
+    }
+    return TRUE;
+  }
+
+  $jurisdictions = $group_storage->loadByProperties(['type' => 'jur']);
+  if (count($jurisdictions) === 1 && $entity->hasField('field_jurisdiction')) {
+    $jurisdiction = reset($jurisdictions);
+    $entity->set('field_jurisdiction', ['target_id' => $jurisdiction->id()]);
+    if ($entity->hasField('field_group')) {
+      $entity->set('field_group', ['target_id' => $jurisdiction->id()]);
+    }
+    return TRUE;
+  }
+
+  return FALSE;
+}
+
+/**
+ * Resolves the effective access scope for an entity.
+ *
+ * @param \Drupal\Core\Entity\EntityInterface $entity
+ *   The scoped entity.
+ *
+ * @return array{type:string,group_id:int}|null
+ *   Effective scope data, or NULL if unscoped.
+ */
+function _beantragt_group_entity_effective_access_scope(EntityInterface $entity): ?array {
+  foreach ([
+    'field_organisation' => 'org',
+    'field_group' => 'legacy',
+    'field_jurisdiction' => 'jur',
+  ] as $field_name => $scope_type) {
+    if (!$entity->hasField($field_name) || $entity->get($field_name)->isEmpty()) {
+      continue;
+    }
+
+    $group_id = (int) $entity->get($field_name)->target_id;
+    if ($group_id <= 0) {
+      continue;
+    }
+
+    if ($scope_type === 'legacy') {
+      $group = \Drupal::entityTypeManager()->getStorage('group')->load($group_id);
+      if (!$group) {
+        return [
+          'type' => 'missing',
+          'group_id' => $group_id,
+        ];
+      }
+      $scope_type = $group->bundle() === 'org' ? 'org' : 'jur';
+    }
+
+    return [
+      'type' => $scope_type,
+      'group_id' => $group_id,
+    ];
+  }
+
+  return NULL;
+}
+
+/**
+ * Resolves an entity's jurisdiction group ID.
+ *
+ * @param \Drupal\Core\Entity\EntityInterface $entity
+ *   The scoped entity.
+ *
+ * @return int|null
+ *   The jurisdiction group ID, or NULL.
+ */
+function _beantragt_group_entity_jurisdiction_id(EntityInterface $entity): ?int {
+  if ($entity->hasField('field_jurisdiction') && !$entity->get('field_jurisdiction')->isEmpty()) {
+    $jurisdiction_id = (int) $entity->get('field_jurisdiction')->target_id;
+    return $jurisdiction_id > 0 ? $jurisdiction_id : NULL;
+  }
+
+  if (!$entity->hasField('field_group') || $entity->get('field_group')->isEmpty()) {
+    return NULL;
+  }
+
+  $group_id = (int) $entity->get('field_group')->target_id;
+  if ($group_id <= 0) {
+    return NULL;
+  }
+
+  $group = \Drupal::entityTypeManager()->getStorage('group')->load($group_id);
+  if (!$group) {
+    return NULL;
+  }
+
+  if ($group->bundle() === 'jur') {
+    return $group_id;
+  }
+
+  if ($group->bundle() === 'org'
+    && $group->hasField('field_jurisdiction')
+    && !$group->get('field_jurisdiction')->isEmpty()) {
+    return (int) $group->get('field_jurisdiction')->target_id;
+  }
+
+  return NULL;
+}
+
+/**
+ * Returns TRUE if an entity has any Beantragt scope fields.
+ */
+function _beantragt_group_entity_has_scope_fields(EntityInterface $entity): bool {
+  foreach (['field_jurisdiction', 'field_organisation', 'field_group'] as $field_name) {
+    if ($entity->hasField($field_name)) {
+      return TRUE;
+    }
+  }
+
+  return FALSE;
+}
+
+/**
+ * Returns all group IDs that scope an entity.
+ *
+ * @param \Drupal\Core\Entity\EntityInterface $entity
+ *   The scoped entity.
+ *
+ * @return int[]
+ *   Group IDs, with organisation first, then jurisdiction, then compatibility
+ *   group.
+ */
+function _beantragt_group_entity_scope_group_ids(EntityInterface $entity): array {
+  $group_ids = [];
+
+  foreach (['field_organisation', 'field_jurisdiction', 'field_group'] as $field_name) {
+    if (!$entity->hasField($field_name) || $entity->get($field_name)->isEmpty()) {
+      continue;
+    }
+
+    foreach ($entity->get($field_name)->getValue() as $item) {
+      $target_id = (int) ($item['target_id'] ?? 0);
+      if ($target_id > 0) {
+        $group_ids[$target_id] = $target_id;
+      }
+    }
+  }
+
+  return array_values($group_ids);
+}
+
+/**
+ * Resolves the organisation group ID for an entity.
+ *
+ * @param \Drupal\Core\Entity\EntityInterface $entity
+ *   The entity carrying scope fields.
+ *
+ * @return int|null
+ *   The organisation group ID, or NULL if none is available.
+ */
+function _beantragt_group_entity_organisation_id(EntityInterface $entity): ?int {
+  if ($entity->hasField('field_organisation') && !$entity->get('field_organisation')->isEmpty()) {
+    $org_id = (int) $entity->get('field_organisation')->target_id;
+    if ($org_id <= 0) {
+      return NULL;
+    }
+
+    $org = \Drupal::entityTypeManager()->getStorage('group')->load($org_id);
+    return ($org && $org->bundle() === 'org') ? $org_id : NULL;
+  }
+
+  if (!$entity->hasField('field_group') || $entity->get('field_group')->isEmpty()) {
+    return NULL;
+  }
+
+  $group_id = (int) $entity->get('field_group')->target_id;
+  if ($group_id <= 0) {
+    return NULL;
+  }
+
+  $group = \Drupal::entityTypeManager()->getStorage('group')->load($group_id);
+  if (!$group || $group->bundle() !== 'org') {
+    return NULL;
+  }
+
+  return $group_id;
+}

@@ -1,0 +1,5 @@
+entity.form_schema.collection:
+  title: 'Form Schemas'
+  route_name: entity.form_schema.collection
+  parent: system.admin_content
+  weight: 10

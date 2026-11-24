@@ -1,0 +1,5 @@
+name: 'Beantragt Compute API'
+type: module
+description: 'Neutral computed-field evaluator contract shared by beantragt_application and beantragt_compute.'
+core_version_requirement: ^11
+package: Beantragt

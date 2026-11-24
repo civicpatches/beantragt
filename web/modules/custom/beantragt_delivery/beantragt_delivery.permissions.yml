@@ -1,0 +1,29 @@
+manage application deliveries:
+  title: 'Manage application deliveries'
+  description: 'Queue, retry and inspect outbound delivery attempts for applications.'
+  restrict access: true
+
+administer application delivery policies:
+  title: 'Administer application delivery policies'
+  description: 'Configure form-level delivery policies that enable automatic pass-through delivery or select external adapters.'
+  restrict access: true
+
+administer application delivery settings:
+  title: 'Administer application delivery settings'
+  description: 'Configure platform-level outbound delivery adapter targets, retries and secret references.'
+  restrict access: true
+
+administer integration connections:
+  title: 'Administer integration connections'
+  description: 'Manage tenant-bound integration connections using operator credential profiles.'
+  restrict access: true
+
+administer integration mappings:
+  title: 'Administer integration mappings'
+  description: 'Manage tenant-bound versioned mappings and form assignments.'
+  restrict access: true
+
+approve application dispatch:
+  title: 'Approve application dispatch'
+  description: 'Approve validated outbound transfers and resume retryable transfers for editable applications in the account tenant scope.'
+  restrict access: true

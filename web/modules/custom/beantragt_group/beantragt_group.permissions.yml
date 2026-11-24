@@ -1,0 +1,14 @@
+administer beantragt groups:
+  title: 'Administer Beantragt Groups'
+  description: 'Manage group types, roles, and memberships for the Beantragt platform.'
+  restrict access: true
+
+bypass beantragt group scope:
+  title: 'Bypass Beantragt group scope'
+  description: 'Allows trusted server-side integration accounts to access scoped Beantragt entities after the Nuxt proxy has performed user-facing authorization.'
+  restrict access: true
+
+administer beantragt retention policies:
+  title: 'Administer Beantragt retention policies'
+  description: 'Allows compliance administrators to change destructive application retention windows.'
+  restrict access: true

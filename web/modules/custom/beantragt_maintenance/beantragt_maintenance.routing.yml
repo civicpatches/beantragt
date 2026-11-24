@@ -1,0 +1,55 @@
+beantragt_maintenance.status:
+  path: '/api/platform/maintenance'
+  defaults:
+    _controller: '\Drupal\beantragt_maintenance\Controller\MaintenanceController::status'
+    _format: json
+  methods: [GET]
+  requirements:
+    # Returns only the maintenance flag, which the frontend needs before login.
+    _access: 'TRUE'
+  options:
+    _format: json
+    _maintenance_access: TRUE
+    no_cache: 'TRUE'
+
+beantragt_maintenance.update:
+  path: '/api/platform/maintenance'
+  defaults:
+    _controller: '\Drupal\beantragt_maintenance\Controller\MaintenanceController::update'
+    _format: json
+  methods: [PATCH]
+  requirements:
+    _custom_access: '\Drupal\beantragt_maintenance\Controller\MaintenanceController::access'
+  options:
+    _format: json
+    _auth: ['cookie']
+    _maintenance_access: TRUE
+    no_cache: 'TRUE'
+
+beantragt_maintenance.recovery_request_code:
+  path: '/api/platform/maintenance/recovery/request-code'
+  defaults:
+    _controller: '\Drupal\beantragt_maintenance\Controller\MaintenanceController::requestRecoveryCode'
+    _format: json
+  methods: [POST]
+  requirements:
+    # Break-glass recovery; controller requires the Nuxt service authorization header.
+    _access: 'TRUE'
+  options:
+    _format: json
+    _maintenance_access: TRUE
+    no_cache: 'TRUE'
+
+beantragt_maintenance.recovery_verify_code:
+  path: '/api/platform/maintenance/recovery/verify-code'
+  defaults:
+    _controller: '\Drupal\beantragt_maintenance\Controller\MaintenanceController::verifyRecoveryCode'
+    _format: json
+  methods: [POST]
+  requirements:
+    # Break-glass recovery; controller requires the Nuxt service authorization header.
+    _access: 'TRUE'
+  options:
+    _format: json
+    _maintenance_access: TRUE
+    no_cache: 'TRUE'

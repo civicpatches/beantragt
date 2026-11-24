@@ -1,0 +1,221 @@
+{
+    "beantragt_external_response": {
+        "fields": {
+            "uuid": {
+                "type": "varchar",
+                "length": 36,
+                "not null": true
+            },
+            "application_id": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "source": {
+                "type": "varchar",
+                "length": 64,
+                "not null": true
+            },
+            "external_id_hash": {
+                "type": "varchar",
+                "length": 64,
+                "not null": true
+            },
+            "external_reference": {
+                "type": "varchar",
+                "length": 255,
+                "not null": true
+            },
+            "title": {
+                "type": "varchar",
+                "length": 255,
+                "not null": true
+            },
+            "received": {
+                "type": "int",
+                "not null": false
+            },
+            "released": {
+                "type": "int",
+                "not null": false
+            },
+            "available": {
+                "type": "int",
+                "not null": false
+            },
+            "retrieved": {
+                "type": "int",
+                "not null": false
+            },
+            "notification_state": {
+                "type": "varchar",
+                "length": 16,
+                "not null": true,
+                "default": "pending"
+            }
+        },
+        "primary key": [
+            "uuid"
+        ],
+        "unique keys": {
+            "external_identity": [
+                "source",
+                "external_id_hash"
+            ]
+        },
+        "indexes": {
+            "application": [
+                "application_id"
+            ]
+        }
+    },
+    "beantragt_external_response_document": {
+        "fields": {
+            "uuid": {
+                "type": "varchar",
+                "length": 36,
+                "not null": true
+            },
+            "response_uuid": {
+                "type": "varchar",
+                "length": 36,
+                "not null": true
+            },
+            "file_id": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "sha512": {
+                "type": "varchar",
+                "length": 128,
+                "not null": true
+            }
+        },
+        "primary key": [
+            "uuid"
+        ],
+        "indexes": {
+            "response": [
+                "response_uuid"
+            ]
+        }
+    },
+    "beantragt_fit_case": {
+        "fields": {
+            "log_id": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "application_id": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "application_uuid": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": false
+            },
+            "scope_hash": {
+                "type": "varchar_ascii",
+                "length": 64,
+                "not null": true
+            },
+            "client_hash": {
+                "type": "varchar_ascii",
+                "length": 64,
+                "not null": true
+            },
+            "destination_id": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": false
+            },
+            "submission_id": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": false
+            },
+            "case_id": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": false
+            },
+            "process_standard": {
+                "type": "varchar",
+                "length": 255,
+                "not null": true
+            },
+            "private_key": {
+                "type": "text",
+                "size": "big",
+                "not null": true
+            },
+            "public_key": {
+                "type": "text",
+                "size": "big",
+                "not null": true
+            }
+        },
+        "primary key": [
+            "log_id"
+        ],
+        "unique keys": {
+            "case_id": [
+                "case_id"
+            ]
+        },
+        "indexes": {
+            "application": [
+                "application_id"
+            ]
+        }
+    },
+    "beantragt_fit_reply_ack": {
+        "fields": {
+            "reply_id": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": true
+            },
+            "case_id": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": false
+            },
+            "application_id": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "tags": {
+                "type": "text",
+                "size": "big",
+                "not null": true
+            },
+            "state": {
+                "type": "varchar_ascii",
+                "length": 16,
+                "not null": true
+            },
+            "acceptance_set": {
+                "type": "text",
+                "size": "big",
+                "not null": true
+            }
+        },
+        "primary key": [
+            "reply_id"
+        ],
+        "indexes": {
+            "application": [
+                "application_id"
+            ],
+            "state": [
+                "state"
+            ]
+        }
+    }
+}

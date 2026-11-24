@@ -1,0 +1,9 @@
+name: 'Beantragt Schema'
+type: module
+description: 'Provides the FormSchema content entity for AI-generated form definitions.'
+core_version_requirement: ^11
+package: Beantragt
+dependencies:
+  - drupal:jsonapi
+  - json_form_widget:json_form_widget
+  - beantragt_roles_api:beantragt_roles_api

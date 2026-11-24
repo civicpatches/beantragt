@@ -1,0 +1,15 @@
+enabled_templates:
+  application_confirmation_request: true
+  application_confirmation: true
+  status_change: true
+  approval: true
+  rejection: false
+  new_application_alert: true
+  assignment_alert: true
+  delegation_alert: true
+  escalation_alert: true
+  deadline_alert: true
+  resubmission_reminder: true
+  application_comment_staff: true
+  application_comment_citizen: true
+  external_response_available: true

@@ -1,0 +1,15 @@
+{
+    "external_response_fields": {
+        "outcome": {
+            "type": "varchar_ascii",
+            "length": 16,
+            "not null": false
+        },
+        "kind": {
+            "type": "varchar_ascii",
+            "length": 16,
+            "not null": true,
+            "default": "decision"
+        }
+    }
+}

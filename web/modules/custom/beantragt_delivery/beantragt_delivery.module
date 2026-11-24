@@ -1,0 +1,239 @@
+<?php
+
+/**
+ * @file
+ * Hooks for beantragt_delivery.
+ */
+
+declare(strict_types=1);
+
+use Drupal\beantragt_delivery\Exception\IntegrationException;
+use Drupal\beantragt_application\Entity\ApplicationInterface;
+use Drupal\beantragt_application\RevisionLog;
+use Drupal\Core\Entity\EntityInterface;
+
+/**
+ * Implements hook_ENTITY_TYPE_insert() for application.
+ */
+function beantragt_delivery_application_insert(EntityInterface $entity): void {
+  if (!$entity instanceof ApplicationInterface) {
+    return;
+  }
+  if (($entity->hasField('field_origin') && $entity->get('field_origin')->value === 'bulk') || !$entity->isEmailConfirmed()) {
+    return;
+  }
+
+  _beantragt_delivery_plan_after_commit($entity);
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_update() for application.
+ */
+function beantragt_delivery_application_update(EntityInterface $entity): void {
+  if (!$entity instanceof ApplicationInterface) {
+    return;
+  }
+  if ((json_decode($entity->getData() ?? '', TRUE)['_anonymized'] ?? NULL) === TRUE) {
+    \Drupal::service('beantragt_delivery.application_purger')->purge($entity);
+    return;
+  }
+  $original = $entity->getOriginal();
+  $events = RevisionLog::decode((string) $entity->getRevisionLogMessage())['events'] ?? [];
+  // Only a staff data edit dooms frozen transfers before their send starts.
+  if ($original instanceof ApplicationInterface && in_array('data_edited', $events, TRUE)
+    && $original->getData() !== $entity->getData()) {
+    _beantragt_delivery_invalidate_after_commit($entity, (int) $entity->getRevisionUserId());
+  }
+}
+
+/**
+ * Fails waiting transfers once the data edit has committed.
+ *
+ * The planner reloads the case under the shared application lock. A failure
+ * here only delays the visible status: the dispatcher still rejects stale data.
+ */
+function _beantragt_delivery_invalidate_after_commit(ApplicationInterface $application, int $uid): void {
+  $id = (int) $application->id();
+  $callback = static function (bool $success) use ($id, $uid): void {
+    if (!$success) {
+      return;
+    }
+    try {
+      $storage = \Drupal::entityTypeManager()->getStorage('application');
+      $storage->resetCache([$id]);
+      $fresh = $storage->load($id);
+      if ($fresh instanceof ApplicationInterface) {
+        \Drupal::service('beantragt_delivery.transfer_planner')->invalidateChangedData($fresh, $uid);
+      }
+    }
+    catch (\Throwable $exception) {
+      $code = $exception instanceof IntegrationException ? $exception->errorCode : 'integration.internal_error';
+      \Drupal::logger('beantragt_delivery')->warning(
+        'Waiting transfers of application @id were not marked after a data edit: @class @code',
+        ['@id' => $id, '@class' => $exception::class, '@code' => $code]
+      );
+    }
+  };
+  $transactions = \Drupal::database()->transactionManager();
+  if ($transactions->inTransaction()) {
+    $transactions->addPostTransactionCallback($callback);
+  }
+  else {
+    $callback(TRUE);
+  }
+}
+
+/**
+ * Implements hook_beantragt_application_timeline_alter().
+ *
+ * Handover and decision entries read as the sending connection names them.
+ */
+function beantragt_delivery_beantragt_application_timeline_alter(array &$timeline, ApplicationInterface $application, ?string $langcode): void {
+  \Drupal::service('beantragt_delivery.timeline_labels')->apply($timeline, $application, $langcode);
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_predelete() for application.
+ */
+function beantragt_delivery_application_predelete(EntityInterface $entity): void {
+  if (!$entity instanceof ApplicationInterface) {
+    return;
+  }
+
+  \Drupal::service('beantragt_delivery.application_purger')->purge($entity);
+}
+
+/**
+ * Implements hook_beantragt_application_confirmed().
+ */
+function beantragt_delivery_beantragt_application_confirmed(ApplicationInterface $application): void {
+  _beantragt_delivery_plan_after_commit($application);
+}
+
+/**
+ * Plans only after the enclosing save commits, outside other insert hooks.
+ */
+function _beantragt_delivery_plan_after_commit(ApplicationInterface $application): void {
+  \Drupal::service('beantragt_delivery.planning_recovery')->record($application);
+  $id = (int) $application->id();
+  $callback = static function (bool $success) use ($id): void {
+    if (!$success) {
+      return;
+    }
+    $fresh = NULL;
+    try {
+      $storage = \Drupal::entityTypeManager()->getStorage('application');
+      $storage->resetCache([$id]);
+      $fresh = $storage->load($id);
+      if ($fresh instanceof ApplicationInterface) {
+        \Drupal::service('beantragt_delivery.dispatcher')->autoEnqueue($fresh);
+        \Drupal::service('beantragt_delivery.planning_recovery')->complete($id);
+      }
+    }
+    catch (\Throwable $exception) {
+      if ($fresh instanceof ApplicationInterface) {
+        try {
+          \Drupal::service('beantragt_delivery.transfer_planner')->recordPlanningFailure($fresh);
+        }
+        catch (\Throwable) {
+          // Keep the committed submission even if audit storage fails.
+        }
+      }
+      // Exceptions may contain SQL arguments, payloads or credentials.
+      $code = $exception instanceof IntegrationException ? $exception->errorCode : 'integration.planning_failed';
+      \Drupal::logger('beantragt_delivery')->error(
+        'Automatic delivery planning failed for application @id: @class @code',
+        [
+          '@id' => $id,
+          '@class' => $exception::class,
+          '@code' => $code,
+        ]
+      );
+    }
+  };
+  $transactions = \Drupal::database()->transactionManager();
+  if ($transactions->inTransaction()) {
+    $transactions->addPostTransactionCallback($callback);
+  }
+  else {
+    $callback(TRUE);
+  }
+}
+
+/**
+ * Plans the transfer after a status change to the trigger status commits.
+ *
+ * Same pattern as _beantragt_delivery_plan_after_commit(): the intent is
+ * recorded inside the status save, the planning runs once it committed. The
+ * status change itself stands whatever happens here; failures show in the
+ * transfer area (audit, planning failure) and are logged with codes only.
+ */
+function _beantragt_delivery_plan_on_status_after_commit(ApplicationInterface $application, int $actor_uid): void {
+  \Drupal::service('beantragt_delivery.planning_recovery')->record($application, 'status', $actor_uid);
+  $id = (int) $application->id();
+  $callback = static function (bool $success) use ($id, $actor_uid): void {
+    if (!$success) {
+      return;
+    }
+    $fresh = NULL;
+    try {
+      $storage = \Drupal::entityTypeManager()->getStorage('application');
+      $storage->resetCache([$id]);
+      $fresh = $storage->load($id);
+      if ($fresh instanceof ApplicationInterface) {
+        \Drupal::service('beantragt_delivery.transfer_planner')->planOnStatus($fresh, $actor_uid);
+        \Drupal::service('beantragt_delivery.planning_recovery')->complete($id);
+      }
+    }
+    catch (\Throwable $exception) {
+      $code = $exception instanceof IntegrationException ? $exception->errorCode : 'integration.planning_failed';
+      if ($fresh instanceof ApplicationInterface) {
+        try {
+          // Two rows on purpose: plan_on_status names the person and the real
+          // code; the plan/denied row of recordPlanningFailure() is what
+          // explain() reads to report planning_failed in the transfer area.
+          \Drupal::service('beantragt_delivery.transfer_planner')->audit($fresh, '', $actor_uid, 'plan_on_status', 'denied', $code);
+          \Drupal::service('beantragt_delivery.transfer_planner')->recordPlanningFailure($fresh);
+        }
+        catch (\Throwable) {
+          // Keep the committed status change even if audit storage fails.
+        }
+      }
+      \Drupal::logger('beantragt_delivery')->error(
+        'Status-triggered transfer planning failed for application @id: @class @code',
+        ['@id' => $id, '@class' => $exception::class, '@code' => $code]
+      );
+    }
+  };
+  $transactions = \Drupal::database()->transactionManager();
+  if ($transactions->inTransaction()) {
+    $transactions->addPostTransactionCallback($callback);
+  }
+  else {
+    $callback(TRUE);
+  }
+}
+
+/**
+ * Implements hook_file_download().
+ */
+function beantragt_delivery_file_download(string $uri): ?int {
+  // Responses must pass the scoped application route, never a direct file URL.
+  return str_starts_with($uri, 'private://external_responses/') ? -1 : NULL;
+}
+
+/**
+ * Implements hook_cron().
+ */
+function beantragt_delivery_cron(): void {
+  \Drupal::service('beantragt_delivery.application_purger')->cleanup();
+  \Drupal::service('beantragt_delivery.planning_recovery')->recover();
+  \Drupal::service('beantragt_delivery.external_response_service')->recoverPendingNotifications();
+  if (\Drupal::config('beantragt_delivery.settings')->get('fit_connect.reply_enabled')
+    || \Drupal::service('beantragt_delivery.fit_connect_case_repository')->boundContextLogIds(1) !== []) {
+    $queue = \Drupal::queue('beantragt_delivery_replies');
+    if ($queue->numberOfItems() === 0) {
+      $queue->createItem(['poll' => TRUE]);
+    }
+  }
+}

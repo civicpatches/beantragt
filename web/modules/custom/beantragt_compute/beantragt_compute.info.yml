@@ -1,0 +1,9 @@
+name: 'Beantragt Compute'
+type: module
+description: 'Server-authoritative computed-field engine. Evaluates compute functions declared as discoverable plugins on presave, overwriting any client-supplied values.'
+core_version_requirement: ^11
+package: Beantragt
+dependencies:
+  - beantragt_compute_api:beantragt_compute_api
+  - beantragt_application:beantragt_application
+  - beantragt_schema:beantragt_schema

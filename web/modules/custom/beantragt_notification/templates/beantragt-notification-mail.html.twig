@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="{{ langcode|default('de') }}" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="x-apple-disable-message-reformatting">
+  <meta name="color-scheme" content="light">
+  <title>{{ subject }}</title>
+</head>
+<body style="margin:0;padding:0;background-color:{{ branding.background_color }};-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%;">
+  <div style="display:none!important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden;">{{ subject }}</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background-color:{{ branding.background_color }};">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:560px;">
+          <tr>
+            <td align="center" style="padding:0 0 24px 0;">
+              {% if branding.logo_cid %}
+                <img src="cid:{{ branding.logo_cid }}" alt="{{ branding.logo_alt }}" width="160" style="display:block;max-width:160px;max-height:80px;width:auto;height:auto;border:0;outline:none;text-decoration:none;">
+              {% else %}
+                <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:20px;font-weight:700;color:{{ branding.secondary_text_color }};">{{ branding.name }}</div>
+              {% endif %}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:32px;background-color:#ffffff;border-radius:16px;border:1px solid #e2e8f0;">
+              <h1 style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:22px;line-height:30px;font-weight:700;color:{{ branding.secondary_text_color }};margin:0 0 20px 0;">{{ subject }}</h1>
+              {% if code %}
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px 0;background-color:{{ branding.primary_color }};border-radius:12px;">
+                  <tr>
+                    <td align="center" style="padding:24px 20px;font-family:Menlo,Monaco,Consolas,monospace;font-size:34px;line-height:42px;letter-spacing:0.12em;font-weight:700;color:{{ branding.primary_foreground_color }};">{{ code }}</td>
+                  </tr>
+                </table>
+              {% endif %}
+              <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:15px;line-height:24px;color:#334155;">{{ body }}</div>
+              {% if cta_url %}
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 0 0;">
+                  <tr>
+                    <td bgcolor="{{ branding.primary_color }}" style="border-radius:999px;background-color:{{ branding.primary_color }};">
+                      <a href="{{ cta_url }}" style="display:inline-block;padding:14px 26px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:15px;font-weight:700;color:{{ branding.primary_foreground_color }};text-decoration:none;border-radius:999px;">{{ cta_label }}</a>
+                    </td>
+                  </tr>
+                </table>
+              {% endif %}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:22px 8px 0 8px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-size:13px;line-height:20px;color:#64748b;">
+              {% if branding.footer %}<div>{{ branding.footer|nl2br }}</div>{% endif %}
+              {% if branding.reply_to %}<div style="margin-top:8px;"><a href="mailto:{{ branding.reply_to }}" style="color:#475569;text-decoration:underline;">{{ branding.reply_to }}</a></div>{% endif %}
+              {% if not branding.footer %}<div>{{ branding.name }}</div>{% endif %}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

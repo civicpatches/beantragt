@@ -1,0 +1,19 @@
+langcode: de
+status: true
+dependencies:
+  config:
+    - field.storage.group.field_privacy_policy
+    - group.type.jur
+id: group.jur.field_privacy_policy
+field_name: field_privacy_policy
+entity_type: group
+bundle: jur
+label: 'Datenschutzerklaerung'
+description: 'Datenschutzerklaerung dieser Jurisdiktion (HTML erlaubt).'
+required: false
+translatable: false
+default_value: {  }
+default_value_callback: ''
+settings:
+  allowed_formats: {  }
+field_type: text_long

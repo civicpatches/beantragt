@@ -1,0 +1,359 @@
+{
+    "operational_fields": {
+        "automatic_attempts": {
+            "type": "int",
+            "unsigned": true,
+            "not null": true,
+            "default": 0
+        },
+        "manual_resumes": {
+            "type": "int",
+            "unsigned": true,
+            "not null": true,
+            "default": 0
+        },
+        "queue_item_id": {
+            "type": "int",
+            "unsigned": true,
+            "not null": false
+        },
+        "replaces_uuid": {
+            "type": "varchar_ascii",
+            "length": 36,
+            "not null": false
+        }
+    },
+    "log": {
+        "description": "Stores outbound application delivery attempts without raw application payloads.",
+        "fields": {
+            "id": {
+                "description": "Primary delivery attempt ID.",
+                "type": "serial",
+                "unsigned": true,
+                "not null": true
+            },
+            "uuid": {
+                "description": "Public UUID for this delivery attempt.",
+                "type": "varchar_ascii",
+                "length": 128,
+                "not null": true
+            },
+            "application_id": {
+                "description": "Internal application entity ID.",
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "application_uuid": {
+                "description": "Application UUID at queue time.",
+                "type": "varchar_ascii",
+                "length": 128,
+                "not null": true
+            },
+            "adapter": {
+                "description": "Delivery adapter machine name.",
+                "type": "varchar_ascii",
+                "length": 64,
+                "not null": true
+            },
+            "target": {
+                "description": "Configured delivery target label or destination ID.",
+                "type": "varchar",
+                "length": 255,
+                "not null": true,
+                "default": ""
+            },
+            "status": {
+                "description": "Current technical delivery status.",
+                "type": "varchar_ascii",
+                "length": 32,
+                "not null": true
+            },
+            "attempts": {
+                "description": "Number of processing attempts.",
+                "type": "int",
+                "unsigned": true,
+                "not null": true,
+                "default": 0
+            },
+            "data_hash": {
+                "description": "SHA-256 hash of the application data JSON.",
+                "type": "varchar_ascii",
+                "length": 64,
+                "not null": true
+            },
+            "external_id": {
+                "description": "External submission, webhook or mock receipt ID.",
+                "type": "varchar",
+                "length": 255,
+                "not null": true,
+                "default": ""
+            },
+            "receipt": {
+                "description": "Non-sensitive delivery receipt reference.",
+                "type": "varchar",
+                "length": 255,
+                "not null": true,
+                "default": ""
+            },
+            "last_error": {
+                "description": "Last non-sensitive delivery error message.",
+                "type": "varchar",
+                "length": 512,
+                "not null": true,
+                "default": ""
+            },
+            "metadata": {
+                "description": "Technical metadata JSON without raw submitted values.",
+                "type": "text",
+                "size": "big",
+                "not null": false
+            },
+            "created": {
+                "description": "Unix timestamp when the delivery attempt was created.",
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "changed": {
+                "description": "Unix timestamp when the delivery attempt last changed.",
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "processed": {
+                "description": "Unix timestamp when the delivery attempt was last processed.",
+                "type": "int",
+                "unsigned": true,
+                "not null": false
+            },
+            "scope_group_id": {
+                "type": "int",
+                "unsigned": true,
+                "not null": false
+            },
+            "integration_mapping_version": {
+                "type": "int",
+                "unsigned": true,
+                "not null": false
+            },
+            "form_schema_revision_id": {
+                "type": "int",
+                "unsigned": true,
+                "not null": false
+            },
+            "dispatch_approved_uid": {
+                "type": "int",
+                "unsigned": true,
+                "not null": false
+            },
+            "dispatch_approved_at": {
+                "type": "int",
+                "unsigned": true,
+                "not null": false
+            },
+            "integration_assignment_uuid": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": false
+            },
+            "integration_connection_uuid": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": false
+            },
+            "integration_mapping_uuid": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": false
+            },
+            "integration_mapping_checksum": {
+                "type": "varchar_ascii",
+                "length": 64,
+                "not null": false
+            },
+            "form_schema_uuid": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": false
+            },
+            "service_urn": {
+                "type": "varchar_ascii",
+                "length": 255,
+                "not null": false
+            },
+            "contract_key": {
+                "type": "varchar_ascii",
+                "length": 128,
+                "not null": false
+            },
+            "contract_version": {
+                "type": "varchar_ascii",
+                "length": 32,
+                "not null": false
+            },
+            "payload_reference": {
+                "type": "varchar_ascii",
+                "length": 255,
+                "not null": false
+            },
+            "payload_sha256": {
+                "type": "varchar_ascii",
+                "length": 64,
+                "not null": false
+            },
+            "dispatch_mode": {
+                "type": "varchar_ascii",
+                "length": 16,
+                "not null": false
+            },
+            "dispatch_approval_status": {
+                "type": "varchar_ascii",
+                "length": 16,
+                "not null": false
+            },
+            "connection_snapshot": {
+                "type": "text",
+                "size": "big",
+                "not null": false
+            },
+            "validation_errors": {
+                "type": "text",
+                "size": "big",
+                "not null": false
+            },
+            "legacy_eligible": {
+                "type": "int",
+                "size": "tiny",
+                "not null": false
+            },
+            "automatic_attempts": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true,
+                "default": 0
+            },
+            "manual_resumes": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true,
+                "default": 0
+            },
+            "queue_item_id": {
+                "type": "int",
+                "unsigned": true,
+                "not null": false
+            },
+            "replaces_uuid": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": false
+            }
+        },
+        "primary key": [
+            "id"
+        ],
+        "unique keys": {
+            "uuid": [
+                "uuid"
+            ]
+        },
+        "indexes": {
+            "application_id": [
+                "application_id"
+            ],
+            "application_uuid": [
+                "application_uuid"
+            ],
+            "status": [
+                "status"
+            ],
+            "adapter": [
+                "adapter"
+            ],
+            "created": [
+                "created"
+            ],
+            "payload_reference": [
+                "payload_reference"
+            ],
+            "scope_connection": [
+                "scope_group_id",
+                "integration_connection_uuid"
+            ],
+            "replaces_uuid": [
+                "replaces_uuid"
+            ]
+        }
+    },
+    "audit": {
+        "fields": {
+            "id": {
+                "type": "serial",
+                "not null": true
+            },
+            "application_id": {
+                "type": "int",
+                "unsigned": true,
+                "not null": false
+            },
+            "scope_group_id": {
+                "type": "int",
+                "unsigned": true,
+                "not null": false
+            },
+            "uid": {
+                "type": "int",
+                "unsigned": true,
+                "not null": false
+            },
+            "created": {
+                "type": "int",
+                "unsigned": true,
+                "not null": false
+            },
+            "application_uuid": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": true
+            },
+            "transfer_uuid": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": true
+            },
+            "action": {
+                "type": "varchar_ascii",
+                "length": 32,
+                "not null": true
+            },
+            "outcome": {
+                "type": "varchar_ascii",
+                "length": 16,
+                "not null": true
+            },
+            "code": {
+                "type": "varchar_ascii",
+                "length": 128,
+                "not null": true
+            }
+        },
+        "primary key": [
+            "id"
+        ],
+        "indexes": {
+            "application_id": [
+                "application_id"
+            ],
+            "created": [
+                "created"
+            ]
+        }
+    },
+    "send_attachments": {
+        "type": "int",
+        "size": "tiny",
+        "not null": true,
+        "default": 0
+    }
+}

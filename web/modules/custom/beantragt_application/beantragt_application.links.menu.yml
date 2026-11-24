@@ -1,0 +1,5 @@
+entity.application.collection:
+  title: 'Applications'
+  route_name: entity.application.collection
+  parent: system.admin_content
+  weight: 15

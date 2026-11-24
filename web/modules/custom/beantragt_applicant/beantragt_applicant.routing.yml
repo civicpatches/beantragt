@@ -1,0 +1,111 @@
+beantragt_applicant.admin_profile_index:
+  path: '/api/admin/applicant-profiles'
+  defaults:
+    _controller: '\Drupal\beantragt_applicant\Controller\AdminApplicantProfileController::index'
+    _format: json
+  methods: [GET]
+  requirements:
+    _user_is_logged_in: 'TRUE'
+  options:
+    _format: json
+    _auth: ['cookie']
+    no_cache: TRUE
+
+beantragt_applicant.citizen_profile_get:
+  path: '/api/citizen/applicant-profile'
+  defaults:
+    _controller: '\Drupal\beantragt_applicant\Controller\CitizenApplicantProfileController::get'
+    _format: json
+  methods: [GET]
+  requirements:
+    _permission: 'manage own applicant profile'
+  options:
+    _format: json
+    _auth: ['cookie']
+    no_cache: TRUE
+
+beantragt_applicant.citizen_profile_patch:
+  path: '/api/citizen/applicant-profile'
+  defaults:
+    _controller: '\Drupal\beantragt_applicant\Controller\CitizenApplicantProfileController::patch'
+    _format: json
+  methods: [PATCH]
+  requirements:
+    _permission: 'manage own applicant profile'
+    _csrf_request_header_token: 'TRUE'
+  options:
+    _format: json
+    _auth: ['cookie']
+    no_cache: TRUE
+
+beantragt_applicant.admin_profile_update:
+  path: '/api/admin/applicants/{email}'
+  defaults:
+    _controller: '\Drupal\beantragt_applicant\Controller\AdminApplicantProfileController::patch'
+    _format: json
+  methods: [PATCH]
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  options:
+    _format: json
+    _auth: ['cookie']
+    no_cache: TRUE
+
+beantragt_applicant.admin_profile_sensitive_reveal:
+  path: '/api/admin/applicant-sensitive/reveal'
+  defaults:
+    _controller: '\Drupal\beantragt_applicant\Controller\AdminApplicantProfileController::revealSensitive'
+    _format: json
+  methods: [POST]
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  options:
+    _format: json
+    _auth: ['cookie']
+    no_cache: TRUE
+
+beantragt_applicant.admin_profile_delete_preview:
+  path: '/api/admin/applicant-cleanup/preview'
+  defaults:
+    _controller: '\Drupal\beantragt_applicant\Controller\AdminApplicantProfileController::deletionPreview'
+    _format: json
+  methods: [POST]
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  options:
+    _format: json
+    _auth: ['cookie']
+    no_cache: TRUE
+
+beantragt_applicant.admin_profile_delete:
+  path: '/api/admin/applicant-cleanup'
+  defaults:
+    _controller: '\Drupal\beantragt_applicant\Controller\AdminApplicantProfileController::delete'
+    _format: json
+  methods: [DELETE]
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  options:
+    _format: json
+    _auth: ['cookie']
+    no_cache: TRUE
+
+beantragt_applicant.citizen_profile_consent_withdraw:
+  path: '/api/citizen/applicant-profile/{profile}/consent/{kind}/withdraw'
+  defaults:
+    _controller: '\Drupal\beantragt_applicant\Controller\CitizenApplicantProfileController::withdrawConsent'
+    _format: json
+  methods: [POST]
+  requirements:
+    _permission: 'manage own applicant profile'
+    _csrf_request_header_token: 'TRUE'
+    profile: '\d+'
+    kind: 'contact|bank'
+  options:
+    _format: json
+    _auth: ['cookie']
+    no_cache: TRUE

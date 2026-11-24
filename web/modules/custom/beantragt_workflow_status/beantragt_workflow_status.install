@@ -1,0 +1,480 @@
+<?php
+
+/**
+ * @file
+ * Install and uninstall functions for beantragt_workflow_status.
+ */
+
+declare(strict_types=1);
+
+use Drupal\beantragt_workflow_status\Entity\WorkflowStatusInterface;
+use Drupal\beantragt_workflow_status\Service\WorkflowStatusSeeder;
+use Drupal\Core\Field\FieldStorageDefinitionInterface;
+use Drupal\group\Entity\GroupInterface;
+
+/**
+ * Implements hook_install().
+ *
+ * Installs the workflow_status entity type and seeds the default status set for
+ * every existing jurisdiction and organisation group.
+ */
+function beantragt_workflow_status_install(): void {
+  _beantragt_workflow_status_install_entity_type();
+  _beantragt_workflow_status_seed_all_workspace_groups();
+}
+
+/**
+ * Implements hook_uninstall().
+ *
+ * Removes the workflow_status entity type.
+ */
+function beantragt_workflow_status_uninstall(): void {
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  $workflow_status_type = $update_manager->getEntityType('workflow_status');
+  if ($workflow_status_type) {
+    $update_manager->uninstallEntityType($workflow_status_type);
+    \Drupal::logger('beantragt_workflow_status')->info(
+      'Removed workflow_status entity type.'
+    );
+  }
+}
+
+/**
+ * Installs the workflow_status entity type definition if it is missing.
+ */
+function _beantragt_workflow_status_install_entity_type(): void {
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  if ($update_manager->getEntityType('workflow_status')) {
+    return;
+  }
+
+  $entity_type = \Drupal::entityTypeManager()->getDefinition('workflow_status', FALSE);
+  if ($entity_type === NULL) {
+    return;
+  }
+
+  $update_manager->installEntityType($entity_type);
+  \Drupal::logger('beantragt_workflow_status')->info('Installed workflow_status entity type.');
+}
+
+/**
+ * Seeds the default status set for every jurisdiction and organisation group.
+ *
+ * @return int
+ *   The number of groups for which statuses were seeded.
+ */
+function _beantragt_workflow_status_seed_all_workspace_groups(): int {
+  if (!\Drupal::entityTypeManager()->hasDefinition('workflow_status')
+    || !\Drupal::entityTypeManager()->hasDefinition('group')) {
+    return 0;
+  }
+
+  /** @var \Drupal\beantragt_workflow_status\Service\WorkflowStatusSeeder $seeder */
+  $seeder = \Drupal::service('beantragt_workflow_status.status_seeder');
+  $group_storage = \Drupal::entityTypeManager()->getStorage('group');
+
+  $group_ids = $group_storage->getQuery()
+    ->accessCheck(FALSE)
+    ->condition('type', ['jur', 'org'], 'IN')
+    ->execute();
+
+  $seeded = 0;
+  // Process in chunks to keep memory bounded on large workspace trees.
+  foreach (array_chunk(array_values($group_ids), 50) as $chunk) {
+    foreach ($group_storage->loadMultiple($chunk) as $group) {
+      if (!$group instanceof GroupInterface) {
+        continue;
+      }
+      $seeder->seedForGroup($group);
+      $seeded++;
+    }
+  }
+
+  return $seeded;
+}
+
+/**
+ * Seeds workflow statuses for jurisdiction groups.
+ */
+function beantragt_workflow_status_update_10003(): string {
+  $seeded = _beantragt_workflow_status_seed_all_workspace_groups();
+  return 'Seeded or repaired workflow status catalogues for ' . $seeded . ' workspace groups.';
+}
+
+/**
+ * Repairs partial workspace workflow status catalogues.
+ */
+function beantragt_workflow_status_update_10004(): string {
+  $seeded = _beantragt_workflow_status_seed_all_workspace_groups();
+  return 'Repaired partial workflow status catalogues for ' . $seeded . ' workspace groups.';
+}
+
+/**
+ * Adds workflow status SLA and escalation fields.
+ */
+function beantragt_workflow_status_update_10005(): string {
+  $installed = [];
+  $field_definitions = \Drupal::service('entity_field.manager')
+    ->getBaseFieldDefinitions('workflow_status');
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+
+  foreach (['field_sla_days', 'field_escalation_days'] as $field_name) {
+    if (!isset($field_definitions[$field_name])) {
+      continue;
+    }
+    if (!$field_definitions[$field_name] instanceof FieldStorageDefinitionInterface) {
+      continue;
+    }
+    if ($update_manager->getFieldStorageDefinition($field_name, 'workflow_status') !== NULL) {
+      continue;
+    }
+    $update_manager->installFieldStorageDefinition(
+      $field_name,
+      'workflow_status',
+      'beantragt_workflow_status',
+      $field_definitions[$field_name],
+    );
+    $installed[] = $field_name;
+  }
+
+  $updated = _beantragt_workflow_status_backfill_sla_rules();
+
+  return $installed === []
+    ? 'Workflow status SLA fields already installed; backfilled ' . $updated . ' statuses.'
+    : 'Installed workflow status SLA fields: ' . implode(', ', $installed) . '; backfilled ' . $updated . ' statuses.';
+}
+
+/**
+ * Adds the case-system statuses to existing workflow status catalogues.
+ *
+ * Catalogues seeded before the status automation lack "An Fachverfahren
+ * übergeben" (in_case_system) and "Bescheid erstellt" (decision_issued),
+ * because seeding skips catalogues that already have a default status.
+ * Catalogues that already have a status with the flag keep it unchanged.
+ *
+ * Since the three-status standard (2026-11-12) these are library statuses:
+ * WorkflowStatusSeeder::addMissingSystemStatuses() adds them with their own
+ * proposals and with transitions from other library statuses only, never
+ * from the standard, so a database that runs this hook late keeps the rule
+ * "a library status is reached through a form workflow only".
+ */
+function beantragt_workflow_status_update_10006(): string {
+  if (!\Drupal::entityTypeManager()->hasDefinition('workflow_status')) {
+    return 'Skipped: the workflow_status entity type is not available.';
+  }
+  /** @var \Drupal\beantragt_workflow_status\Service\WorkflowStatusSeeder $seeder */
+  $seeder = \Drupal::service('beantragt_workflow_status.status_seeder');
+  $storage = \Drupal::entityTypeManager()->getStorage('workflow_status');
+  $group_ids = [];
+  foreach ($storage->loadMultiple($storage->getQuery()->accessCheck(FALSE)->execute()) as $status) {
+    if ($status instanceof WorkflowStatusInterface && $status->getGroupId() !== NULL) {
+      $group_ids[$status->getGroupId()] = TRUE;
+    }
+  }
+
+  $catalogues = 0;
+  $created = 0;
+  foreach (array_keys($group_ids) as $group_id) {
+    $added = $seeder->addMissingSystemStatuses((int) $group_id);
+    if ($added !== []) {
+      $catalogues++;
+      $created += count($added);
+    }
+  }
+
+  return sprintf('Added %d case-system statuses to %d workflow status catalogues.', $created, $catalogues);
+}
+
+/**
+ * Adds citizen labels and the hand_over/filed semantic flags.
+ */
+function beantragt_workflow_status_update_10007(): string {
+  $field_definitions = \Drupal::service('entity_field.manager')
+    ->getBaseFieldDefinitions('workflow_status');
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  $installed = [];
+  foreach (['field_citizen_label_de', 'field_citizen_label_en'] as $field_name) {
+    if (!isset($field_definitions[$field_name])
+      || !$field_definitions[$field_name] instanceof FieldStorageDefinitionInterface
+      || $update_manager->getFieldStorageDefinition($field_name, 'workflow_status') !== NULL) {
+      continue;
+    }
+    $update_manager->installFieldStorageDefinition(
+      $field_name,
+      'workflow_status',
+      'beantragt_workflow_status',
+      $field_definitions[$field_name],
+    );
+    $installed[] = $field_name;
+  }
+  // The allowed values of the flag list changed; keep entity:updates clean.
+  if (isset($field_definitions['field_semantic_flags'])
+    && $field_definitions['field_semantic_flags'] instanceof FieldStorageDefinitionInterface
+    && $update_manager->getFieldStorageDefinition('field_semantic_flags', 'workflow_status') !== NULL) {
+    $update_manager->updateFieldStorageDefinition($field_definitions['field_semantic_flags']);
+  }
+  return $installed === []
+    ? 'Citizen label fields already installed; updated the semantic flag definition.'
+    : 'Installed ' . implode(', ', $installed) . ' and updated the semantic flag definition.';
+}
+
+/**
+ * Adds the hand-over and filing statuses and backfills citizen labels.
+ *
+ * Same rule as beantragt_workflow_status_update_10006(): library statuses,
+ * no transition from the standard.
+ */
+function beantragt_workflow_status_update_10008(): string {
+  if (!\Drupal::entityTypeManager()->hasDefinition('workflow_status')) {
+    return 'Skipped: the workflow_status entity type is not available.';
+  }
+  /** @var \Drupal\beantragt_workflow_status\Service\WorkflowStatusSeeder $seeder */
+  $seeder = \Drupal::service('beantragt_workflow_status.status_seeder');
+  $storage = \Drupal::entityTypeManager()->getStorage('workflow_status');
+  $storage->resetCache();
+  $group_ids = [];
+  foreach ($storage->loadMultiple($storage->getQuery()->accessCheck(FALSE)->execute()) as $status) {
+    if ($status instanceof WorkflowStatusInterface && $status->getGroupId() !== NULL) {
+      $group_ids[$status->getGroupId()] = TRUE;
+    }
+  }
+  $catalogues = 0;
+  $created = 0;
+  foreach (array_keys($group_ids) as $group_id) {
+    $added = $seeder->addMissingSystemStatuses((int) $group_id);
+    if ($added !== []) {
+      $catalogues++;
+      $created += count($added);
+    }
+  }
+  $filled = _beantragt_workflow_status_backfill_citizen_labels();
+  return sprintf('Added %d hand-over and filing statuses to %d catalogues; filled citizen texts of %d statuses.', $created, $catalogues, $filled);
+}
+
+/**
+ * Fills citizen texts of unchanged seeded statuses from the seed.
+ *
+ * Only statuses whose machine name and label still match the seed and whose
+ * citizen texts are both empty; renamed or custom statuses stay untouched.
+ *
+ * @return int
+ *   Number of statuses that received citizen texts.
+ */
+function _beantragt_workflow_status_backfill_citizen_labels(): int {
+  $defaults = [];
+  foreach (WorkflowStatusSeeder::getDefaultStatusDefinitions() as $definition) {
+    $defaults[(string) $definition['machine_name']] = $definition;
+  }
+  $storage = \Drupal::entityTypeManager()->getStorage('workflow_status');
+  $updated = 0;
+  foreach ($storage->loadMultiple($storage->getQuery()->accessCheck(FALSE)->execute()) as $status) {
+    if (!$status instanceof WorkflowStatusInterface || !$status->hasField('field_citizen_label_de')) {
+      continue;
+    }
+    $definition = $defaults[$status->getMachineName()] ?? NULL;
+    if ($definition === NULL || (string) $status->label() !== (string) $definition['label']) {
+      continue;
+    }
+    $stored = trim((string) ($status->get('field_citizen_label_de')->value ?? ''))
+      . trim((string) ($status->get('field_citizen_label_en')->value ?? ''));
+    if ($stored !== '') {
+      continue;
+    }
+    $de = (string) ($definition['citizen_label_de'] ?? '');
+    $en = (string) ($definition['citizen_label_en'] ?? '');
+    if ($de === '' && $en === '') {
+      continue;
+    }
+    $status->set('field_citizen_label_de', $de);
+    $status->set('field_citizen_label_en', $en);
+    $status->save();
+    $updated++;
+  }
+  return $updated;
+}
+
+/**
+ * Backfills status SLA settings from the default seed definitions.
+ */
+function _beantragt_workflow_status_backfill_sla_rules(): int {
+  if (!\Drupal::entityTypeManager()->hasDefinition('workflow_status')) {
+    return 0;
+  }
+
+  $defaults = [];
+  foreach (WorkflowStatusSeeder::getDefaultStatusDefinitions() as $definition) {
+    $machine_name = (string) ($definition['machine_name'] ?? '');
+    if ($machine_name === '') {
+      continue;
+    }
+    $defaults[$machine_name] = [
+      'sla_days' => max(0, (int) ($definition['sla_days'] ?? 0)),
+      'escalation_days' => max(0, (int) ($definition['escalation_days'] ?? 0)),
+    ];
+  }
+
+  $storage = \Drupal::entityTypeManager()->getStorage('workflow_status');
+  $ids = $storage->getQuery()
+    ->accessCheck(FALSE)
+    ->execute();
+
+  $updated = 0;
+  foreach ($storage->loadMultiple($ids) as $status) {
+    if (!$status instanceof WorkflowStatusInterface) {
+      continue;
+    }
+    $machine_name = $status->getMachineName();
+    if (!isset($defaults[$machine_name])
+      || !$status->hasField('field_sla_days')
+      || !$status->hasField('field_escalation_days')) {
+      continue;
+    }
+
+    $changed = FALSE;
+    if ($status->get('field_sla_days')->isEmpty() || (int) ($status->get('field_sla_days')->value ?? 0) === 0) {
+      $status->set('field_sla_days', $defaults[$machine_name]['sla_days']);
+      $changed = TRUE;
+    }
+    if ($status->get('field_escalation_days')->isEmpty() || (int) ($status->get('field_escalation_days')->value ?? 0) === 0) {
+      $status->set('field_escalation_days', $defaults[$machine_name]['escalation_days']);
+      $changed = TRUE;
+    }
+
+    if ($changed) {
+      $status->save();
+      $updated++;
+    }
+  }
+
+  return $updated;
+}
+
+/**
+ * Adds semantic flags to workflow status definitions.
+ */
+function beantragt_workflow_status_update_10001(): string {
+  $field_definitions = \Drupal::service('entity_field.manager')
+    ->getBaseFieldDefinitions('workflow_status');
+  if (!isset($field_definitions['field_semantic_flags'])) {
+    return 'Skipped workflow_status.field_semantic_flags because the base field definition is unavailable.';
+  }
+  $storage_definition = $field_definitions['field_semantic_flags'];
+  if (!$storage_definition instanceof FieldStorageDefinitionInterface) {
+    return 'Skipped workflow_status.field_semantic_flags because the storage definition is unavailable.';
+  }
+
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  if ($update_manager->getFieldStorageDefinition('field_semantic_flags', 'workflow_status') !== NULL) {
+    $updated = _beantragt_workflow_status_backfill_semantic_flags();
+    return 'Workflow status semantic flags field already exists; backfilled ' . $updated . ' statuses.';
+  }
+
+  $update_manager->installFieldStorageDefinition(
+    'field_semantic_flags',
+    'workflow_status',
+    'beantragt_workflow_status',
+    $storage_definition,
+  );
+
+  $updated = _beantragt_workflow_status_backfill_semantic_flags();
+
+  return 'Installed workflow_status.field_semantic_flags and backfilled ' . $updated . ' statuses.';
+}
+
+/**
+ * Formerly added the transition Eingegangen to Nachforderung offen.
+ *
+ * Since the three-status standard (2026-11-12) "Unterlagen nachgefordert" is
+ * a library status: a transition from "Eingegangen" would make it part of
+ * the standard of every form without own workflow. The hook stays registered
+ * (a database below 10002 still passes through it) and changes nothing; a
+ * form that needs the status switches it on in its form workflow.
+ */
+function beantragt_workflow_status_update_10002(): string {
+  return 'Skipped: Nachforderung offen is a library status since the three-status standard; no transition from Eingegangen is added.';
+}
+
+/**
+ * Backfills semantic flags for existing seeded status catalogues.
+ */
+function _beantragt_workflow_status_backfill_semantic_flags(): int {
+  if (!\Drupal::entityTypeManager()->hasDefinition('workflow_status')) {
+    return 0;
+  }
+
+  $map = [
+    'new' => ['received'],
+    'eingegangen' => ['received'],
+    'returned' => ['request_info'],
+    'rueckfrage_offen' => ['request_info'],
+    'nachforderung_offen' => ['request_info'],
+    'approved' => ['approved', 'closed'],
+    'genehmigt' => ['approved', 'closed'],
+    'rejected' => ['rejected', 'closed'],
+    'abgelehnt' => ['rejected', 'closed'],
+    'closed' => ['closed'],
+    'geschlossen' => ['closed'],
+    'beantwortet' => ['closed'],
+    'umgesetzt' => ['closed'],
+    'withdrawn' => ['withdrawn', 'closed'],
+    'zurueckgezogen' => ['withdrawn', 'closed'],
+  ];
+
+  $storage = \Drupal::entityTypeManager()->getStorage('workflow_status');
+  $ids = $storage->getQuery()
+    ->accessCheck(FALSE)
+    ->execute();
+  $updated = 0;
+  foreach ($storage->loadMultiple($ids) as $status) {
+    if (!$status instanceof
+    WorkflowStatusInterface      || !$status->hasField('field_semantic_flags')
+      || !$status->get('field_semantic_flags')->isEmpty()) {
+      continue;
+    }
+    $flags = $map[$status->getMachineName()] ?? [];
+    if ($flags === []) {
+      continue;
+    }
+    $status->set('field_semantic_flags', array_map(
+      static fn(string $flag): array => ['value' => $flag],
+      $flags,
+    ));
+    $status->save();
+    $updated++;
+  }
+
+  return $updated;
+}
+
+/**
+ * Adds the flag documents_received ("Unterlagen eingegangen").
+ *
+ * Updates the flag list definition and adds the flag to every status with
+ * the machine name vollstaendigkeit_geprueft of the default catalogue.
+ */
+function beantragt_workflow_status_update_10009(): string {
+  if (!\Drupal::entityTypeManager()->hasDefinition('workflow_status')) {
+    return 'Skipped: the workflow_status entity type is not available.';
+  }
+  $field_definitions = \Drupal::service('entity_field.manager')->getBaseFieldDefinitions('workflow_status');
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  if (isset($field_definitions['field_semantic_flags'])
+    && $field_definitions['field_semantic_flags'] instanceof FieldStorageDefinitionInterface
+    && $update_manager->getFieldStorageDefinition('field_semantic_flags', 'workflow_status') !== NULL) {
+    $update_manager->updateFieldStorageDefinition($field_definitions['field_semantic_flags']);
+  }
+  $storage = \Drupal::entityTypeManager()->getStorage('workflow_status');
+  $storage->resetCache();
+  $changed = 0;
+  $ids = $storage->getQuery()->accessCheck(FALSE)->condition('field_machine_name', 'vollstaendigkeit_geprueft')->execute();
+  foreach ($storage->loadMultiple($ids) as $status) {
+    if (!$status instanceof WorkflowStatusInterface || $status->hasSemanticFlag(WorkflowStatusInterface::FLAG_DOCUMENTS_RECEIVED)) {
+      continue;
+    }
+    $flags = $status->getSemanticFlags();
+    $flags[] = WorkflowStatusInterface::FLAG_DOCUMENTS_RECEIVED;
+    $status->set('field_semantic_flags', array_values(array_unique($flags)))->save();
+    $changed++;
+  }
+  return sprintf('Added documents_received to %d statuses.', $changed);
+}

@@ -1,0 +1,9 @@
+name: 'beantragt SSO'
+type: module
+description: 'Generic SSO service provider integration for BundID, ADFS, and other SAML identity providers.'
+package: beantragt.ai
+core_version_requirement: ^11
+dependencies:
+  - beantragt:beantragt_applicant
+  - beantragt:beantragt_passwordless
+  - beantragt_roles_api:beantragt_roles_api

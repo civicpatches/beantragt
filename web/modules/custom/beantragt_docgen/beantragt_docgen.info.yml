@@ -1,0 +1,12 @@
+name: Beantragt Docgen
+type: module
+description: 'Decision notices from Word templates: template catalog, placeholders, drafts, mandatory PDF/A preview and release through the docgen service.'
+package: beantragt.ai
+core_version_requirement: ^11
+dependencies:
+  - drupal:file
+  - group:group
+  - beantragt_application:beantragt_application
+  - beantragt_group:beantragt_group
+  - beantragt_schema:beantragt_schema
+  - beantragt_delivery:beantragt_delivery

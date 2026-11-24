@@ -1,0 +1,196 @@
+services:
+  beantragt_application.event_read_state:
+    class: Drupal\beantragt_application\Service\ApplicationEventReadState
+    arguments: ['@database', '@datetime.time', '@beantragt_application.message_read_state', '@state', '@class_resolver', '@beantragt_application.protected_data_gate', '@?beantragt_delivery.scope_access', '@?beantragt_docgen.scope_access', '@?beantragt_docgen.document_service', '@?beantragt_bulk.scan_event_intake_source', '@?beantragt_group.shared_account_read_only']
+
+  beantragt_application.message_read_state:
+    class: Drupal\beantragt_application\Service\ApplicationMessageReadState
+    arguments: ['@database', '@datetime.time', '@module_handler', '@beantragt_application.comment_staff_scope', '@state']
+
+  beantragt_application.comment_staff_scope:
+    class: Drupal\beantragt_application\Access\ApplicationCommentStaffScope
+    arguments: ['@entity_type.manager']
+
+  beantragt_application.application_case_scope:
+    class: Drupal\beantragt_application\Access\ApplicationCaseScope
+    arguments: ['@entity_type.manager']
+
+  beantragt_application.route_subscriber:
+    class: Drupal\beantragt_application\Routing\ApplicationRouteSubscriber
+    tags:
+      - { name: event_subscriber }
+
+  logger.channel.beantragt_application:
+    parent: logger.channel_base
+    arguments: ['beantragt_application']
+  beantragt_application.reference_number_generator:
+    class: Drupal\beantragt_application\Service\ReferenceNumberGenerator
+    arguments:
+      - '@entity_type.manager'
+      - '@database'
+  beantragt_application.effective_workflow_resolver:
+    class: Drupal\beantragt_application\Service\EffectiveWorkflowResolver
+    arguments:
+      - '@entity_type.manager'
+      - '@beantragt_workflow_status.status_manager'
+  beantragt_application.citizen_status_projection:
+    class: Drupal\beantragt_application\Service\CitizenStatusProjection
+    arguments:
+      - '@entity_type.manager'
+      - '@module_handler'
+  beantragt_application.data_protection:
+    class: Drupal\beantragt_application\Service\ApplicationDataProtectionService
+    arguments:
+      - '@entity_type.manager'
+      - '@logger.channel.beantragt_application'
+      - '@beantragt_application.protected_access_log'
+  beantragt_application.applicant_profile_switch:
+    class: Drupal\beantragt_application\Service\ApplicantProfileSwitch
+  beantragt_application.protected_data_gate:
+    class: Drupal\beantragt_application\Service\ProtectedDataGate
+    arguments: ['@beantragt_application.application_case_scope']
+  beantragt_application.protected_access_log:
+    class: Drupal\beantragt_application\Service\ProtectedAccessLog
+    arguments:
+      - '@database'
+      - '@datetime.time'
+  beantragt_application.confirmed_mailbox:
+    class: Drupal\beantragt_application\Service\ConfirmedApplicationMailbox
+    arguments:
+      - '@database'
+      - '@entity_type.manager'
+      - '@beantragt_application.data_protection'
+      - '@request_stack'
+      - '@beantragt_application.protected_access_log'
+      - '@?beantragt_passwordless.verified_mail'
+  beantragt_application.data_edit_validator:
+    class: Drupal\beantragt_application\Service\ApplicationDataEditValidator
+  beantragt_application.correction_transfer_lock:
+    class: Drupal\beantragt_application\Service\ApplicationCorrectionTransferLock
+    arguments: ['@?database', '@module_handler']
+  beantragt_application.public_submission_validator:
+    class: Drupal\beantragt_application\Service\PublicApplicationSubmissionValidator
+    arguments: ['@beantragt_application.form_value_parser', '@string_translation']
+  beantragt_application.form_value_parser:
+    class: Drupal\beantragt_application\Service\FormValueParser
+  beantragt_application.staff_attachment_analysis:
+    class: Drupal\beantragt_application\Service\StaffAttachmentAnalysis
+    arguments: ['@beantragt_application.data_protection', '@beantragt_application.form_value_parser']
+  beantragt_application.public_idempotency_store:
+    class: Drupal\Core\KeyValueStore\KeyValueStoreExpirableInterface
+    factory: ['@keyvalue.expirable', 'get']
+    arguments:
+      - 'beantragt_application.public_api_idempotency'
+  beantragt_application.public_idempotency:
+    class: Drupal\beantragt_application\Service\PublicApplicationIdempotencyService
+    arguments:
+      - '@beantragt_application.public_idempotency_store'
+      - '@lock'
+      - '@datetime.time'
+  beantragt_application.public_attachment_claims:
+    class: Drupal\beantragt_application\Service\PublicApplicationAttachmentClaimService
+    arguments:
+      - '@entity_type.manager'
+      - '@config.factory'
+      - '@datetime.time'
+      - '@lock'
+      - '@beantragt_application.attachment_storage_quota'
+  beantragt_application.email_confirmation_tokens:
+    class: Drupal\beantragt_application\Service\EmailConfirmationTokenService
+    arguments:
+      - '@entity_type.manager'
+      - '@database'
+      - '@config.factory'
+      - '@datetime.time'
+      - '@logger.channel.beantragt_application'
+      - '@beantragt_application.data_protection'
+      - '@module_handler'
+  beantragt_application.tenant_scoped_entity_query:
+    class: Drupal\beantragt_application\Service\TenantScopedEntityQuery
+    arguments:
+      - '@entity_type.manager'
+      - '@entity_field.manager'
+  beantragt_application.staff_application_statistics:
+    class: Drupal\beantragt_application\Service\StaffApplicationStatistics
+    arguments:
+      - '@entity_type.manager'
+      - '@database'
+      - '@beantragt_application.tenant_scoped_entity_query'
+      - '@entity.query.sql'
+      - '@datetime.time'
+  beantragt_application.retention_cleanup:
+    class: Drupal\beantragt_application\Service\RetentionCleanupService
+    arguments:
+      - '@entity_type.manager'
+      - '@config.factory'
+      - '@datetime.time'
+      - '@logger.channel.beantragt_application'
+      - '@lock'
+      - '@?beantragt_group.org_hierarchy_resolver'
+  beantragt_application.dependent_mutation_lock:
+    class: Drupal\beantragt_application\Service\ApplicationDependentMutationLock
+    arguments:
+      - '@entity_type.manager'
+      - '@lock'
+      - '@database'
+  beantragt_application.applicant_scope_mutation_lock:
+    class: Drupal\beantragt_application\Service\ApplicantScopeMutationLock
+    arguments:
+      - '@lock'
+      - '@beantragt_application.data_protection'
+      - '@database'
+  beantragt_application.attachment_storage_quota:
+    class: Drupal\beantragt_application\Service\AttachmentStorageQuota
+    arguments:
+      - '@entity_type.manager'
+      - '@datetime.time'
+      - '@database'
+  beantragt_application.attachment_scanner:
+    class: Drupal\beantragt_application\Service\AttachmentScanServiceInterface
+    factory: ['@beantragt_application.attachment_scanner_factory', 'create']
+  beantragt_application.attachment_scanner_factory:
+    class: Drupal\beantragt_application\Service\AttachmentScanServiceFactory
+  beantragt_application.attachment_analysis_dispatcher:
+    class: Drupal\beantragt_application\Service\AttachmentAnalysisDispatcher
+    arguments:
+      - '@entity_type.manager'
+      - '@queue'
+      - '@http_client'
+      - '@logger.channel.beantragt_application'
+      - '@lock'
+      - '@datetime.time'
+      - '@beantragt_application.document_guard_client'
+      - '@file_system'
+      - '@?file.repository'
+      - '@beantragt_application.attachment_storage_quota'
+      - '@beantragt_application.attachment_analysis_metadata_writer'
+      - '@beantragt_application.attachment_analysis_source_preparer'
+  beantragt_application.attachment_analysis_source_preparer:
+    class: Drupal\beantragt_application\Service\AttachmentAnalysisSourcePreparer
+    arguments:
+      - '@beantragt_application.document_guard_client'
+  beantragt_application.attachment_analysis_metadata_writer:
+    class: Drupal\beantragt_application\Service\AttachmentAnalysisMetadataWriter
+    arguments:
+      - '@entity_type.manager'
+      - '@lock'
+      - '@datetime.time'
+      - '@beantragt_application.data_protection'
+      - '@database'
+  beantragt_application.document_guard_client:
+    class: Drupal\beantragt_application\Service\DocumentGuardClient
+    arguments:
+      - '@http_client'
+      - '@datetime.time'
+  beantragt_application.locked_exception_subscriber:
+    class: Drupal\beantragt_application\EventSubscriber\ApplicationLockedExceptionSubscriber
+    tags:
+      - { name: event_subscriber }
+  beantragt_application.attachment_mime_sniffer:
+    class: Drupal\beantragt_application\Service\AttachmentMimeSniffer
+  # Pre-check blocks of the staff attachment list. Providers live in
+  # other modules (beantragt_bulk); without one the list is unchanged.
+  beantragt_application.attachment_precheck:
+    class: Drupal\beantragt_application\Service\AttachmentPrecheck
+    tags:
+      - { name: service_collector, tag: beantragt_application_attachment_precheck, call: addProvider }

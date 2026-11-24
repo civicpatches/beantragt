@@ -1,0 +1,11 @@
+langcode: de
+status: true
+dependencies: {  }
+id: org
+label: Dienststelle
+description: 'Dienststelle einer Stadt oder Gemeinde.'
+new_revision: true
+creator_membership: true
+creator_wizard: true
+creator_roles:
+  - org-admin

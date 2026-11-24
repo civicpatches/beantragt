@@ -1,0 +1,8 @@
+{
+  "svgSha256": "5779f9a87bc3d41d9ada9598809ee84da7ca7cfe173d597f717fd99b44a5d225",
+  "pngSha256": "65abab4dc67654f55b09943d9f8fa0f780bf95d96e00893209ccffb627bdb69b",
+  "darkPngSha256": "553f92a70ed965782283693df9ad97b30c72d5df8ea4ed16600d8904a8db3f0e",
+  "width": 720,
+  "height": 224,
+  "renderer": "chromium via scripts/render-demo-logo-png.mjs"
+}

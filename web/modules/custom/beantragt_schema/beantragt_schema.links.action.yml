@@ -1,0 +1,11 @@
+entity.form_schema.add_form:
+  route_name: entity.form_schema.add_form
+  title: 'Add Form Schema'
+  appears_on:
+    - entity.form_schema.collection
+
+beantragt_schema.import:
+  route_name: beantragt_schema.import
+  title: 'Import schema JSON'
+  appears_on:
+    - entity.form_schema.collection

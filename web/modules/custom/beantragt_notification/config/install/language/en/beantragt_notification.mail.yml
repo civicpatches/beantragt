@@ -1,0 +1,175 @@
+application_confirmation_request:
+  subject: 'Please confirm your email address'
+  body: |
+    Hello,
+
+    please confirm your email address so your submission can be processed.
+
+    Confirm email address: @confirmation_url
+
+    If you did not submit this application, you can ignore this message.
+
+application_confirmation:
+  subject: 'Confirmation of receipt: your application @reference_number'
+  body: |
+    Hello @full_name,
+
+    thank you for your application "@form_title".
+
+    Your reference number is: @reference_number
+    Submission date: @application_date
+    View application: @citizen_application_url
+
+    We will process your application as soon as possible. Please quote your
+    reference number if you contact us.
+
+    @org_name
+
+status_change:
+  subject: 'Status update for your application @reference_number'
+  body: |
+    Hello @full_name,
+
+    the status of your application "@form_title" (reference: @reference_number)
+    has changed.
+
+    Previous status: @old_status
+    New status: @new_status
+    View application: @citizen_application_url
+
+    Please contact the responsible office if you have any questions.
+
+    @org_name
+
+approval:
+  subject: 'Your application @reference_number was approved'
+  body: |
+    Hello @full_name,
+
+    your application "@form_title" (reference: @reference_number) was approved.
+    View application: @citizen_application_url
+
+    If further steps are required, we will inform you separately.
+
+    @org_name
+
+rejection:
+  subject: 'Your application @reference_number was rejected'
+  body: |
+    Hello @full_name,
+
+    your application "@form_title" (reference: @reference_number) was rejected.
+
+    Reason: @rejection_reason
+    View application: @citizen_application_url
+
+    Please contact the responsible office if you have questions about this decision.
+
+    @org_name
+
+new_application_alert:
+  subject: 'New application received: @reference_number'
+  body: |
+    A new application has been received.
+
+    Form: @form_title
+    Reference number: @reference_number
+    Submission date: @application_date
+    Applicant: @full_name
+    Open application: @admin_application_url
+
+    Please review the application promptly.
+
+assignment_alert:
+  subject: 'Application assigned: @reference_number'
+  body: |
+    An application has been assigned to you or your team.
+
+    Form: @form_title
+    Reference number: @reference_number
+    Assigned to: @assigned_to@assigned_team
+    Open application: @admin_application_url
+
+    Please review the application promptly.
+
+delegation_alert:
+  subject: 'Delegation: application @reference_number'
+  body: |
+    An application has been delegated to your organisation.
+
+    Reference number: @reference_number
+    From: @source_org
+    To: @target_org
+    Internal note: @note
+    Open application: @admin_application_url
+
+    Please review the new responsibility promptly.
+
+escalation_alert:
+  subject: 'Escalation: application @reference_number has been pending for @escalation_days days'
+  body: |
+    The following application has been pending for @escalation_days days and
+    requires your attention.
+
+    Form: @form_title
+    Reference number: @reference_number
+    Current status: @new_status
+    Assigned to: @assigned_to
+    Open application: @admin_application_url
+
+    Please process this case promptly.
+
+deadline_alert:
+  subject: 'Follow-up due: application @reference_number'
+  body: |
+    The following application is due or overdue and requires your attention.
+
+    Form: @form_title
+    Reference number: @reference_number
+    Due date: @due_date
+    Current status: @new_status
+    Assigned to: @assigned_to@assigned_team
+    Open application: @admin_application_url
+
+    Please review this case promptly.
+
+resubmission_reminder:
+  subject: 'Follow-up: application @reference_number unchanged for @days_idle days'
+  body: |
+    The following application has been unchanged for @days_idle days and has
+    already triggered @reminder_count follow-up reminders.
+
+    Application type: @form_title
+    Reference number: @reference_number
+
+    Please check whether this case requires further processing.
+
+application_comment_staff:
+  subject: 'Question about your application @reference_number'
+  body: |
+    Hello @full_name,
+
+    there is a question about your application "@form_title" (reference:
+    @reference_number).
+
+    Please sign in to read and answer the question in the protected area.
+    View application: @citizen_application_url
+
+    @org_name
+
+application_comment_citizen:
+  subject: 'Citizen reply for application @reference_number'
+  body: |
+    A reply has been received for application "@form_title" (reference:
+    @reference_number).
+
+    Please review the reply promptly in the protected administration area.
+    Open application: @admin_application_url
+
+external_response_available:
+  subject: 'A new document for your application @reference_number'
+  body: |
+    A new document for your application is available in the citizen portal.
+
+    Please sign in to access it:
+    @citizen_application_url

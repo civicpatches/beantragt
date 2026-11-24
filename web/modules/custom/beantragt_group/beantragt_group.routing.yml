@@ -1,0 +1,276 @@
+beantragt_group.workspace_invite_create:
+  path: '/api/workspace-invites'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\WorkspaceInviteController::createInvite'
+    _format: json
+  requirements:
+    _custom_access: '\Drupal\beantragt_group\Controller\WorkspaceInviteController::access'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_group.workspace_invite_list:
+  path: '/api/workspace-invites'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\WorkspaceInviteController::listInvites'
+    _format: json
+  requirements:
+    _custom_access: '\Drupal\beantragt_group\Controller\WorkspaceInviteController::access'
+  methods: [GET]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_group.workspace_invite_revoke:
+  path: '/api/workspace-invites/{invitation_id}'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\WorkspaceInviteController::revokeInvite'
+    _format: json
+  requirements:
+    _custom_access: '\Drupal\beantragt_group\Controller\WorkspaceInviteController::access'
+    _csrf_request_header_token: 'TRUE'
+    invitation_id: \d+
+  methods: [DELETE]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_group.workspace_invite_verify:
+  path: '/api/workspace-invites/verify/{token}'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\WorkspaceInviteController::verifyInvite'
+    _format: json
+  requirements:
+    # Invite check by 64-character token, flood-limited per IP in the controller.
+    _access: 'TRUE'
+    token: '[a-f0-9]{64}'
+  methods: [GET]
+  options:
+    _format: json
+
+beantragt_group.workspace_invite_claim:
+  path: '/api/workspace-invites/claim/{token}'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\WorkspaceInviteController::claimInvite'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+    token: '[a-f0-9]{64}'
+  methods: [POST]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_group.workflow_status_access:
+  path: '/api/admin/workflow-status-access/{group_id}'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\WorkflowStatusAccessController::check'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    group_id: \d+
+  methods: [GET]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_group.admin_workspaces:
+  path: '/api/admin/workspaces'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\AdminWorkspaceController::listWorkspaces'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_group.admin_workspace_settings_get:
+  path: '/api/admin/workspace-settings'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\WorkspaceSettingsController::getWorkspaceSettings'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_group.admin_workspace_settings_patch:
+  path: '/api/admin/workspace-settings'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\WorkspaceSettingsController::patchWorkspaceSettings'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  methods: [PATCH]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_group.admin_workspace_organisations_list:
+  path: '/api/admin/workspace-organisations'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\WorkspaceOrganisationController::listOrganisations'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_group.admin_workspace_organisations_create:
+  path: '/api/admin/workspace-organisations'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\WorkspaceOrganisationController::createOrganisation'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+  methods: [POST]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_group.admin_workspace_organisations_patch:
+  path: '/api/admin/workspace-organisations/{organisation_id}'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\WorkspaceOrganisationController::patchOrganisation'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+    organisation_id: '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+  methods: [PATCH]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_group.admin_workspace_organisations_delete:
+  path: '/api/admin/workspace-organisations/{organisation_id}'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\WorkspaceOrganisationController::deleteOrganisation'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+    organisation_id: '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+  methods: [DELETE]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_group.jurisdiction_settings_get:
+  path: '/api/admin/jurisdictions/{jurisdiction_id}/settings/{section}'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\JurisdictionConfigController::getSection'
+    _format: json
+  requirements:
+    _custom_access: '\Drupal\beantragt_group\Controller\JurisdictionConfigController::accessCheck'
+    jurisdiction_id: '[a-z0-9-]+'
+    section: '[a-z_]+'
+  methods: [GET]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_group.jurisdiction_settings_patch:
+  path: '/api/admin/jurisdictions/{jurisdiction_id}/settings/{section}'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\JurisdictionConfigController::patchSection'
+    _format: json
+  requirements:
+    _custom_access: '\Drupal\beantragt_group\Controller\JurisdictionConfigController::accessCheck'
+    _csrf_request_header_token: 'TRUE'
+    jurisdiction_id: '[a-z0-9-]+'
+    section: '[a-z_]+'
+  methods: [PATCH]
+  options:
+    _format: json
+    _auth: ['cookie']
+
+beantragt_group.jurisdiction_public_config:
+  path: '/api/jurisdictions/{slug}/config'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\JurisdictionConfigController::publicConfig'
+    _format: json
+  requirements:
+    _permission: 'access content'
+    slug: '[a-z0-9-]+'
+  methods: [GET]
+  options:
+    _format: json
+
+beantragt_group.api_v1_jurisdiction_public_config:
+  path: '/api/v1/jurisdictions/{slug}/config'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\JurisdictionConfigController::publicConfigV1'
+    _format: json
+  requirements:
+    # Public configuration of a published jurisdiction only.
+    _access: 'TRUE'
+    slug: '[^/]+'
+  methods: [GET]
+  options:
+    _format: json
+
+beantragt_group.api_v1_jurisdiction_public_boundary:
+  path: '/api/v1/jurisdictions/{slug}/boundary'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\JurisdictionConfigController::publicBoundaryV1'
+    _format: json
+  requirements:
+    # Public boundary of a published jurisdiction only.
+    _access: 'TRUE'
+    slug: '[^/]+'
+  methods: [GET]
+  options:
+    _format: json
+
+beantragt_group.case_layout_get:
+  path: '/api/staff/case-layout/{workspace_id}'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\CaseLayoutController::preferences'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    workspace_id: '\d+'
+  methods: [GET]
+  options:
+    _auth: ['cookie']
+    no_cache: TRUE
+
+beantragt_group.case_layout_patch:
+  path: '/api/staff/case-layout/{workspace_id}'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\CaseLayoutController::preferences'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+    workspace_id: '\d+'
+  methods: [PATCH]
+  options:
+    _auth: ['cookie']
+    no_cache: TRUE
+
+beantragt_group.case_layout_workspace_patch:
+  path: '/api/staff/case-layout/{workspace_id}/workspace'
+  defaults:
+    _controller: '\Drupal\beantragt_group\Controller\CaseLayoutController::workspace'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+    _csrf_request_header_token: 'TRUE'
+    workspace_id: '\d+'
+  methods: [PATCH]
+  options:
+    _auth: ['cookie']
+    no_cache: TRUE

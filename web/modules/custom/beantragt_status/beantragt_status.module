@@ -1,0 +1,46 @@
+<?php
+
+/**
+ * @file
+ * Primary module hooks for beantragt_status module.
+ */
+
+declare(strict_types=1);
+
+/**
+ * Implements hook_mail().
+ */
+function beantragt_status_mail(string $key, array &$message, array $params): void {
+  switch ($key) {
+    case 'status_lookup_code':
+      $langcode = (string) ($message['langcode'] ?? 'en');
+      $subject = $langcode === 'de'
+        ? 'Statuscode für @reference_number'
+        : 'Status code for @reference_number';
+      $body = $langcode === 'de'
+        ? "Ihr Statuscode für @reference_number lautet: @code\n\nDer Code ist @expires_in Minuten gültig.\n\n@platform_name"
+        : "Your status code for @reference_number is: @code\n\nThe code expires in @expires_in minutes.\n\n@platform_name";
+      $message['subject'] = strtr($subject, [
+        '@reference_number' => $params['reference_number'] ?? '',
+      ]);
+      $message['body'][] = strtr(
+        $body,
+        [
+          '@code' => $params['code'] ?? '',
+          '@expires_in' => $params['expires_in'] ?? '10',
+          '@platform_name' => $params['platform_name'] ?? 'beantragt.ai',
+          '@reference_number' => $params['reference_number'] ?? '',
+        ],
+      );
+      break;
+  }
+}
+
+/**
+ * Implements hook_cron().
+ */
+function beantragt_status_cron(): void {
+  /** @var \Drupal\beantragt_status\Service\StatusOtpService $otp_service */
+  $otp_service = \Drupal::service('beantragt_status.status_otp');
+  $otp_service->cleanupExpiredCodes();
+}

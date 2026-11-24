@@ -1,0 +1,52 @@
+services:
+  logger.channel.beantragt_docgen:
+    parent: logger.channel_base
+    arguments: ['beantragt_docgen']
+
+  beantragt_docgen.client:
+    class: Drupal\beantragt_docgen\Service\DocgenClient
+    arguments: ['@http_client', '@logger.channel.beantragt_docgen']
+
+  beantragt_docgen.scope_access:
+    class: Drupal\beantragt_docgen\Service\DocgenScopeAccess
+    arguments: ['@entity_type.manager']
+
+  beantragt_docgen.settings:
+    class: Drupal\beantragt_docgen\Service\DocgenSettingsRepository
+    arguments: ['@database', '@datetime.time', '@cache_tags.invalidator']
+
+  beantragt_docgen.document_repository:
+    class: Drupal\beantragt_docgen\Service\DocumentRepository
+    arguments: ['@database']
+
+  beantragt_docgen.template_catalog:
+    class: Drupal\beantragt_docgen\Service\TemplateCatalog
+    arguments: ['@entity_type.manager', '@file_system', '@file.repository', '@beantragt_docgen.client', '@beantragt_docgen.scope_access', '@beantragt_docgen.document_repository', '@uuid', '@datetime.time', '@lock', '@?beantragt_application.attachment_scanner']
+
+  beantragt_docgen.render_data_builder:
+    class: Drupal\beantragt_docgen\Service\RenderDataBuilder
+    arguments: ['@entity_type.manager', '@date.formatter', '@datetime.time', '@beantragt_docgen.settings', '@beantragt_docgen.scope_access', '@?beantragt_application.data_protection', '@beantragt_docgen.case_extensions', '@logger.channel.beantragt_docgen', '@beantragt_docgen.request_letter_values']
+
+  beantragt_docgen.form_templates:
+    class: Drupal\beantragt_docgen\Service\FormTemplates
+    arguments: ['@entity_type.manager', '@beantragt_docgen.settings', '@beantragt_docgen.template_catalog', '@beantragt_docgen.client', '@beantragt_docgen.scope_access', '@?beantragt_application.data_protection', '@?beantragt_delivery.postbox_transport']
+
+  beantragt_docgen.document_service:
+    class: Drupal\beantragt_docgen\Service\DocumentService
+    arguments: ['@beantragt_docgen.document_repository', '@beantragt_docgen.template_catalog', '@beantragt_docgen.settings', '@beantragt_docgen.render_data_builder', '@beantragt_docgen.client', '@beantragt_docgen.scope_access', '@entity_type.manager', '@file_system', '@file.repository', '@uuid', '@datetime.time', '@lock', '@logger.channel.beantragt_docgen', '@?beantragt_delivery.external_response_service', '@?beantragt_application.dependent_mutation_lock', '@beantragt_docgen.case_extensions', '@beantragt_docgen.letterhead', '@?beantragt_docgen.appendix']
+
+  beantragt_docgen.case_extensions:
+    class: Drupal\beantragt_docgen\Service\DocgenCaseExtensions
+    arguments: ['@logger.channel.beantragt_docgen']
+    tags:
+      - { name: service_collector, tag: beantragt_docgen_case_extension, call: addExtension }
+
+  beantragt_docgen.letterhead:
+    class: Drupal\beantragt_docgen\Service\LetterheadService
+    arguments: ['@?beantragt_group.jurisdiction_config']
+
+  beantragt_docgen.request_letter_values:
+    class: Drupal\beantragt_docgen\Service\RequestLetterValues
+    arguments: ['@?beantragt_group.jurisdiction_config', '@entity_type.manager', '@date.formatter', '@datetime.time']
+    tags:
+      - { name: beantragt_jurisdiction_config_section }

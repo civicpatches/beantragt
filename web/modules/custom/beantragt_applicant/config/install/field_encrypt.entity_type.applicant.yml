@@ -1,0 +1,11 @@
+dependencies:
+  module:
+    - beantragt_applicant
+id: applicant
+base_fields:
+  field_iban:
+    - value
+  field_tax_id:
+    - value
+  field_account_holder:
+    - value

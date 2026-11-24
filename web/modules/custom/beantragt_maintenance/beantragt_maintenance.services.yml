@@ -1,0 +1,27 @@
+services:
+  logger.channel.beantragt_maintenance:
+    parent: logger.channel_base
+    arguments: ['beantragt_maintenance']
+
+  beantragt_maintenance.recovery_crypto:
+    class: Drupal\beantragt_maintenance\Service\RecoveryCrypto
+
+  beantragt_maintenance.break_glass_otp:
+    class: Drupal\beantragt_maintenance\Service\BreakGlassOtpService
+    arguments:
+      - '@state'
+      - '@entity_type.manager'
+      - '@keyvalue.expirable'
+      - '@lock'
+      - '@plugin.manager.mail'
+      - '@config.factory'
+      - '@logger.channel.beantragt_maintenance'
+      - '@beantragt_maintenance.recovery_crypto'
+      - '@datetime.time'
+    tags:
+      - { name: event_subscriber }
+
+  beantragt_maintenance.route_subscriber:
+    class: Drupal\beantragt_maintenance\Routing\MaintenanceRouteSubscriber
+    tags:
+      - { name: event_subscriber }

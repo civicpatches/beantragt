@@ -1,0 +1,15 @@
+name: Beantragt Content
+type: module
+description: 'Content pages and boilerplate text templates scoped to Beantragt jurisdictions.'
+package: Beantragt
+core_version_requirement: ^11
+dependencies:
+  - drupal:file
+  - drupal:language
+  - drupal:node
+  - drupal:options
+  - drupal:text
+  - beantragt_application:beantragt_application
+  - beantragt_group:beantragt_group
+  - beantragt_roles_api:beantragt_roles_api
+  - beantragt_schema:beantragt_schema

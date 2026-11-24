@@ -1,0 +1,27 @@
+langcode: de
+status: true
+dependencies:
+  config:
+    - field.storage.group.field_jurisdiction
+    - group.type.jur
+    - group.type.org
+id: group.org.field_jurisdiction
+field_name: field_jurisdiction
+entity_type: group
+bundle: org
+label: Jurisdiktion
+description: 'Stadt oder Gemeinde, zu der diese Dienststelle gehört.'
+required: true
+translatable: false
+default_value: {  }
+default_value_callback: ''
+settings:
+  handler: 'default:group'
+  handler_settings:
+    target_bundles:
+      jur: jur
+    sort:
+      field: label
+      direction: ASC
+    auto_create: false
+field_type: entity_reference

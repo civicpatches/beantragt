@@ -1,0 +1,247 @@
+<?php
+
+/**
+ * @file
+ * Install and update hooks for beantragt_sso.
+ */
+
+declare(strict_types=1);
+
+use Drupal\Core\Session\UserSessionRepositoryInterface;
+use Drupal\Core\StringTranslation\TranslatableMarkup;
+use Drupal\beantragt_roles_api\BeantragtRoles;
+use Drupal\beantragt_sso\Service\SsoAccountPolicy;
+use Drupal\user\UserInterface;
+
+/**
+ * Implements hook_requirements().
+ */
+function beantragt_sso_requirements($phase): array {
+  if ($phase !== 'runtime') {
+    return [];
+  }
+
+  $providers = \Drupal::config('beantragt_sso.settings')->get('providers');
+  if (!is_array($providers)) {
+    return [];
+  }
+
+  $provider_manager = \Drupal::service('beantragt_sso.provider_manager');
+  $blocked = [];
+  foreach ($providers as $provider_id => $provider) {
+    if (!is_string($provider_id) || !is_array($provider) || empty($provider['enabled'])) {
+      continue;
+    }
+    if ($provider_manager->isMockProvider($provider) && !$provider_manager->mockAllowed()) {
+      $blocked[] = $provider_id;
+    }
+  }
+
+  if ($blocked === []) {
+    return [];
+  }
+
+  // On a dev/DDEV host an enabled-but-disallowed mock provider is a
+  // tolerable misconfiguration (WARNING). On a production host it is a login
+  // bypass: a mock provider would accept demo identities without real SAML, so
+  // escalate to ERROR to block the install/update and force operator action.
+  $is_dev_context = $provider_manager->isDevContext();
+  $severity = $is_dev_context ? REQUIREMENT_WARNING : REQUIREMENT_ERROR;
+  $description = $is_dev_context
+    ? new TranslatableMarkup(
+        'Mock SSO provider(s) @providers are enabled, but this environment does not allow mock login. In development, set BEANTRAGT_SSO_MOCK=true together with IS_DDEV_PROJECT=true or a dev BEANTRAGT_ENV, or disable the provider(s).',
+        ['@providers' => implode(', ', $blocked)],
+      )
+    : new TranslatableMarkup(
+        'Mock SSO provider(s) @providers are enabled on a non-development host. Mock providers bypass real SAML authentication and must never be active in production. Disable the provider(s) immediately.',
+        ['@providers' => implode(', ', $blocked)],
+      );
+
+  return [
+    'beantragt_sso_mock_provider' => [
+      'title' => new TranslatableMarkup('beantragt SSO mock providers'),
+      'value' => new TranslatableMarkup('Misconfigured'),
+      'severity' => $severity,
+      'description' => $description,
+    ],
+  ];
+}
+
+/**
+ * Implements hook_schema().
+ */
+function beantragt_sso_schema(): array {
+  $schema['beantragt_sso_identities'] = [
+    'description' => 'Maps external SSO subjects to Drupal users without storing raw NameIDs.',
+    'fields' => [
+      'id' => [
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'provider' => [
+        'type' => 'varchar',
+        'length' => 64,
+        'not null' => TRUE,
+      ],
+      'subject_hash' => [
+        'type' => 'varchar',
+        'length' => 64,
+        'not null' => TRUE,
+      ],
+      'uid' => [
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'disabled' => [
+        'type' => 'int',
+        'size' => 'tiny',
+        'not null' => TRUE,
+        'default' => 0,
+      ],
+      'link_method' => [
+        'type' => 'varchar',
+        'length' => 32,
+        'not null' => TRUE,
+        'default' => 'login',
+      ],
+      'email_claim' => [
+        'type' => 'varchar',
+        'length' => 254,
+        'not null' => FALSE,
+      ],
+      'assurance_level' => [
+        'type' => 'varchar',
+        'length' => 128,
+        'not null' => FALSE,
+      ],
+      'created' => [
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'changed' => [
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+    ],
+    'primary key' => ['id'],
+    'unique keys' => [
+      'provider_subject' => ['provider', 'subject_hash'],
+    ],
+    'indexes' => [
+      'uid' => ['uid'],
+    ],
+  ];
+
+  $schema['beantragt_sso_replay'] = [
+    'description' => 'Stores processed SSO message and assertion IDs for replay protection.',
+    'fields' => [
+      'id' => [
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'provider' => [
+        'type' => 'varchar',
+        'length' => 64,
+        'not null' => TRUE,
+      ],
+      'message_id' => [
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => FALSE,
+      ],
+      'assertion_id' => [
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => FALSE,
+      ],
+      'expires' => [
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'created' => [
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+    ],
+    'primary key' => ['id'],
+    'unique keys' => [
+      'provider_message' => ['provider', 'message_id'],
+      'provider_assertion' => ['provider', 'assertion_id'],
+    ],
+    'indexes' => [
+      'expires' => ['expires'],
+    ],
+  ];
+
+  return $schema;
+}
+
+/**
+ * Quarantines legacy bindings without provenance and disables unsafe linking.
+ */
+function beantragt_sso_update_10001(): void {
+  $database = \Drupal::database();
+  $schema = $database->schema();
+  $fields = beantragt_sso_schema()['beantragt_sso_identities']['fields'];
+  foreach (['disabled', 'link_method', 'email_claim'] as $field) {
+    if (!$schema->fieldExists('beantragt_sso_identities', $field)) {
+      $definition = $fields[$field];
+      // DDL is not transactional on MariaDB. A stopped update must leave old
+      // rows quarantinable, even before the explicit backfill below runs.
+      if ($field === 'link_method') {
+        $definition['default'] = 'legacy';
+      }
+      $schema->addField('beantragt_sso_identities', $field, $definition);
+      if ($field === 'link_method') {
+        // Only existing rows lack provenance; future inserts default to login.
+        $database->update('beantragt_sso_identities')
+          ->fields(['link_method' => 'legacy'])->execute();
+      }
+    }
+  }
+  $schema->changeField('beantragt_sso_identities', 'link_method', 'link_method', $fields['link_method']);
+  $policy = new SsoAccountPolicy(\Drupal::entityTypeManager());
+  $identities = $database->select('beantragt_sso_identities', 'i')->fields('i')->execute();
+  foreach ($identities as $identity) {
+    $user = \Drupal::entityTypeManager()->getStorage('user')->load($identity->uid);
+    $unsafe = !$user instanceof UserInterface
+      || BeantragtRoles::isServiceAccount($user)
+      || $identity->link_method === 'legacy'
+      || ($identity->link_method !== 'manual' && $policy->requiresManualBinding($user));
+    if (!$unsafe) {
+      continue;
+    }
+    if (empty($identity->disabled)) {
+      $database->update('beantragt_sso_identities')->fields(['disabled' => 1])
+        ->condition('id', $identity->id)->execute();
+    }
+    if ($user instanceof UserInterface) {
+      \Drupal::service(UserSessionRepositoryInterface::class)->deleteAll((int) $user->id());
+    }
+  }
+  $config = \Drupal::configFactory()->getEditable('beantragt_sso.settings');
+  $providers = $config->get('providers') ?? [];
+  foreach ($providers as &$provider) {
+    if (empty($provider['email_verified'])) {
+      $provider['link_by_email'] = FALSE;
+    }
+  }
+  unset($provider);
+  $config->set('providers', $providers)->save(TRUE);
+}
+
+/**
+ * Keeps future bindings non-privileged on sites with the earlier schema.
+ */
+function beantragt_sso_update_10002(): void {
+  $database = \Drupal::database();
+  $definition = beantragt_sso_schema()['beantragt_sso_identities']['fields']['link_method'];
+  $database->schema()->changeField('beantragt_sso_identities', 'link_method', 'link_method', $definition);
+}

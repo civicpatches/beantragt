@@ -1,0 +1,6 @@
+services:
+  beantragt_group.fachadministration_commands:
+    class: Drupal\beantragt_group\Commands\FachadministrationCommands
+    arguments: ['@beantragt_group.fachadministration_grant', '@entity_type.manager']
+    tags:
+      - { name: drush.command }

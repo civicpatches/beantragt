@@ -1,0 +1,22 @@
+langcode: de
+status: true
+dependencies:
+  config:
+    - field.storage.group.field_retention_days
+    - group.type.org
+id: group.org.field_retention_days
+field_name: field_retention_days
+entity_type: group
+bundle: org
+label: 'Aufbewahrungsfrist in Tagen'
+description: 'Leer übernimmt die Frist der nächsten übergeordneten Dienststelle mit gesetztem Wert oder den Standard des Mandanten. 0 deaktiviert die automatische Löschung für die Dienststelle. Eine Frist des Formulars hat Vorrang.'
+required: false
+translatable: false
+default_value: {  }
+default_value_callback: ''
+settings:
+  min: 0
+  max: 36500
+  prefix: ''
+  suffix: ''
+field_type: integer

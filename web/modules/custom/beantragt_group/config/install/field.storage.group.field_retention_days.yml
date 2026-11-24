@@ -1,0 +1,19 @@
+langcode: de
+status: true
+dependencies:
+  module:
+    - group
+id: group.field_retention_days
+field_name: field_retention_days
+entity_type: group
+type: integer
+settings:
+  unsigned: true
+  size: normal
+module: core
+locked: false
+cardinality: 1
+translatable: false
+indexes: {  }
+persist_with_no_fields: false
+custom_storage: false

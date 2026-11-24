@@ -1,0 +1,154 @@
+beantragt_delivery.settings:
+  type: config_object
+  label: 'Beantragt Delivery settings'
+  mapping:
+    enabled:
+      type: boolean
+      label: 'Enable automatic delivery'
+    auto_enqueue:
+      type: boolean
+      label: 'Queue delivery attempts on application insert'
+    default_adapter:
+      type: string
+      label: 'Default delivery adapter'
+      constraints:
+        Choice: [mock, webhook]
+    max_attempts:
+      type: integer
+      label: 'Maximum queue attempts'
+    mock:
+      type: mapping
+      label: 'Mock delivery settings'
+      mapping:
+        target:
+          type: string
+          label: 'Mock target label'
+    webhook:
+      type: mapping
+      label: 'Webhook delivery settings'
+      mapping:
+        target_url:
+          type: string
+          label: 'Webhook target URL'
+        secret_env:
+          type: string
+          label: 'Environment variable containing the webhook signing secret'
+        allowed_hosts:
+          type: sequence
+          label: 'Allowed webhook target hosts'
+          sequence:
+            type: string
+            label: 'Allowed host'
+        timeout_seconds:
+          type: integer
+          label: 'Webhook request timeout in seconds'
+    fit_connect:
+      type: mapping
+      label: 'FIT-Connect settings'
+      mapping:
+        environment:
+          type: string
+          label: 'FIT-Connect environment'
+        client_id:
+          type: string
+          label: 'Sender client ID'
+        client_secret_env:
+          type: string
+          label: 'Environment variable containing the sender client secret'
+        token_url:
+          type: string
+          label: 'OAuth token URL'
+        submission_api_base:
+          type: string
+          label: 'Submission API base URL'
+        destination_api_base:
+          type: string
+          label: 'Destination API base URL'
+        routing_api_base:
+          type: string
+          label: 'Routing API base URL'
+        destination_id:
+          type: string
+          label: 'Configured destination ID'
+        service_urn:
+          type: string
+          label: 'Service URN'
+        ars:
+          type: string
+          label: 'Administrative region key'
+        schema_uri:
+          type: string
+          label: 'Submission data schema URI'
+        schema_mime_type:
+          type: string
+          label: 'Submission data schema MIME type'
+        metadata_schema_version:
+          type: string
+          label: 'FIT-Connect metadata schema version'
+        use_routing_api:
+          type: boolean
+          label: 'Resolve destination through Routing API'
+        reply_enabled:
+          type: boolean
+          label: 'Advertise and poll FIT-Connect replies'
+        reply_process_standard:
+          type: string
+          label: 'Agreed FIT-Connect reply process standard'
+        trust_external_release:
+          type: boolean
+          label: 'Trust explicitly released responses from the configured destination'
+    credential_profiles:
+      type: sequence
+      label: 'Operator-managed credential profiles'
+      sequence:
+        type: mapping
+        label: 'Credential profile'
+        mapping:
+          allowed_scopes:
+            type: sequence
+            label: 'Explicitly allowed scope group IDs'
+            sequence:
+              type: integer
+              label: 'Scope group ID'
+          all_scopes:
+            type: boolean
+            label: 'Explicitly allow every scope group'
+          label:
+            type: label
+            label: 'Human label'
+          client_id:
+            type: string
+            label: 'Sender client ID'
+          client_secret_env:
+            type: string
+            label: 'Operator secret environment variable'
+          token_url:
+            type: string
+            label: 'TEST OAuth token URL'
+          submission_api_base:
+            type: string
+            label: 'TEST submission API base'
+          metadata_schema_version:
+            type: string
+            label: 'Metadata schema version'
+          confirmed_destinations:
+            type: sequence
+            label: 'Operator-confirmed tenant destination and contract grants'
+            sequence:
+              type: mapping
+              mapping:
+                scope_group_id:
+                  type: integer
+                  label: 'Tenant group ID'
+                destination_id:
+                  type: string
+                  label: 'Confirmed destination UUID'
+                service_urn:
+                  type: string
+                  label: 'Confirmed service'
+                contract_key:
+                  type: string
+                  label: 'Confirmed contract'
+                contract_version:
+                  type: string
+                  label: 'Confirmed contract version'

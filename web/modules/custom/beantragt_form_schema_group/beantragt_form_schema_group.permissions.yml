@@ -1,0 +1,31 @@
+administer form_schema_group entities:
+  title: 'Administer Form Schema Group entities'
+  description: 'Full administrative access to Form Schema Group entities.'
+  restrict access: true
+
+view published form_schema_group entities:
+  title: 'View published Form Schema Group entities'
+
+view unpublished form_schema_group entities:
+  title: 'View unpublished Form Schema Group entities'
+
+create form_schema_group entities:
+  title: 'Create Form Schema Group entities'
+  description: 'Allows creating form schema groups, including via JSON:API POST.'
+  restrict access: true
+
+edit own form_schema_group entities:
+  title: 'Edit own Form Schema Group entities'
+
+edit any form_schema_group entities:
+  title: 'Edit any Form Schema Group entities'
+  description: 'Allows editing all form schema groups, including via JSON:API PATCH.'
+  restrict access: true
+
+delete own form_schema_group entities:
+  title: 'Delete own Form Schema Group entities'
+
+delete any form_schema_group entities:
+  title: 'Delete any Form Schema Group entities'
+  description: 'Allows deleting any form schema group.'
+  restrict access: true

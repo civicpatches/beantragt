@@ -1,0 +1,11 @@
+# GDPR data retention settings.
+# Applications older than this period (in days) will be deleted by cron.
+# Set to 0 to disable automatic retention cleanup.
+data_retention_days: 730
+# Maximum total size of claimed attachments per submitted application in bytes.
+# Set to 0 to disable this aggregate cap.
+attachment_max_total_bytes_per_application: 52428800
+# Email confirmation tokens expire after this many hours.
+confirmation_token_ttl_hours: 72
+# Unconfirmed public applications are purged after this many hours.
+confirmation_purge_hours: 168

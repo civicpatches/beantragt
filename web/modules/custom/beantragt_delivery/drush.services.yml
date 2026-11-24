@@ -1,0 +1,19 @@
+services:
+  beantragt_delivery.commands:
+    class: Drupal\beantragt_delivery\Commands\DeliveryCommands
+    arguments:
+      - '@entity_type.manager'
+      - '@beantragt_delivery.dispatcher'
+      - '@beantragt_delivery.log_repository'
+      - '@beantragt_delivery.fit_connect_gateway'
+      - '@beantragt_delivery.local_mock_receiver'
+      - '@beantragt_delivery.local_webhook_receiver'
+      - '@state'
+    tags:
+      - { name: drush.command }
+
+  beantragt_delivery.reply_commands:
+    class: Drupal\beantragt_delivery\Commands\ReplyCommands
+    arguments: ['@beantragt_delivery.fit_connect_reply_poller']
+    tags:
+      - { name: drush.command }

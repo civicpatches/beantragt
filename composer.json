@@ -1,0 +1,84 @@
+{
+    "name": "civicpatches/beantragt",
+    "description": "beantragt.ai - AI-powered form platform for municipalities",
+    "type": "project",
+    "license": "GPL-2.0-or-later",
+    "authors": [
+        {
+            "name": "Holger Kreis",
+            "homepage": "https://www.drupal.org/u/markaspot",
+            "role": "Maintainer"
+        }
+    ],
+    "repositories": [
+        {
+            "type": "composer",
+            "url": "https://packages.drupal.org/8"
+        }
+    ],
+    "require": {
+        "ext-zip": "*",
+        "chillerlan/php-qrcode": "^5.0",
+        "composer/installers": "^2",
+        "drupal/core": "~11.4.13",
+        "drupal/core-composer-scaffold": "~11.4.13",
+        "drupal/core-recommended": "~11.4.13",
+        "drupal/encrypt": "^3.3",
+        "drupal/entity": "^1.8",
+        "drupal/field_encrypt": "^4.1",
+        "drupal/gin": "^5.0.16",
+        "drupal/gin_login": "^2",
+        "drupal/group": "^3",
+        "drupal/json_form_widget": "^1.0",
+        "drupal/jsonapi_extras": "^3",
+        "drupal/key": "^1.22",
+        "drupal/real_aes": "^2.6",
+        "drush/drush": "^13",
+        "onelogin/php-saml": "^4.3",
+        "opis/json-schema": "^2.6",
+        "web-token/jwt-library": "^4"
+    },
+    "require-dev": {
+        "drupal/core-dev": "~11.4.13"
+    },
+    "conflict": {
+        "drupal/drupal": "*"
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "config": {
+        "allow-plugins": {
+            "composer/installers": true,
+            "drupal/core-composer-scaffold": true,
+            "phpstan/extension-installer": true,
+            "dealerdirect/phpcodesniffer-composer-installer": true,
+            "php-http/discovery": true,
+            "symfony/runtime": true
+        },
+        "sort-packages": true
+    },
+    "extra": {
+        "drupal-scaffold": {
+            "locations": {
+                "web-root": "web/"
+            }
+        },
+        "installer-paths": {
+            "web/core": [
+                "type:drupal-core"
+            ],
+            "web/libraries/{$name}": [
+                "type:drupal-library"
+            ],
+            "web/modules/contrib/{$name}": [
+                "type:drupal-module"
+            ],
+            "web/profiles/contrib/{$name}": [
+                "type:drupal-profile"
+            ],
+            "web/themes/contrib/{$name}": [
+                "type:drupal-theme"
+            ]
+        }
+    }
+}

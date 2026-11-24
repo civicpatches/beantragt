@@ -1,0 +1,10 @@
+name: 'Beantragt Group'
+type: module
+description: 'Adds group-based access control for form schemas and applications with jurisdiction/organization hierarchy.'
+core_version_requirement: ^11
+package: Beantragt
+dependencies:
+  - drupal:group
+  - beantragt_schema:beantragt_schema
+  - beantragt_application:beantragt_application
+  - beantragt_roles_api:beantragt_roles_api

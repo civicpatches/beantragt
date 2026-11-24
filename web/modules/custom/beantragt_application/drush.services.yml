@@ -1,0 +1,12 @@
+services:
+  beantragt_application.data_protection_commands:
+    class: Drupal\beantragt_application\Commands\DataProtectionCommands
+    arguments: ['@module_handler']
+    tags:
+      - { name: drush.command }
+  beantragt_application.retention_commands:
+    class: Drupal\beantragt_application\Commands\RetentionCommands
+    arguments:
+      - '@beantragt_application.retention_cleanup'
+    tags:
+      - { name: drush.command }

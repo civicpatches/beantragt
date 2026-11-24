@@ -1,0 +1,59 @@
+# Public status lookup endpoint.
+#
+# These routes require no authentication. Reference-number lookup requires an
+# email OTP. The canonical citizen status link uses a random public token.
+beantragt_status.lookup:
+  path: '/api/status/{reference_number}'
+  defaults:
+    _controller: '\Drupal\beantragt_status\Controller\StatusController::getStatus'
+    _format: json
+  requirements:
+    # Public manual lookup endpoint with Drupal flood control in controller
+    # and Nuxt proxy rate limiting.
+    _access: 'TRUE'
+    reference_number: '[A-Za-z0-9][A-Za-z0-9-]{2,63}'
+  methods: [GET]
+
+beantragt_status.lookup_request_code:
+  path: '/api/status/{reference_number}/request-code'
+  defaults:
+    _controller: '\Drupal\beantragt_status\Controller\StatusController::requestReferenceCode'
+    _format: json
+  requirements:
+    # Controller requires the Nuxt service authorization header and flood limits.
+    _access: 'TRUE'
+    reference_number: '[A-Za-z0-9][A-Za-z0-9-]{2,63}'
+  methods: [POST]
+
+beantragt_status.lookup_verify_code:
+  path: '/api/status/{reference_number}/verify-code'
+  defaults:
+    _controller: '\Drupal\beantragt_status\Controller\StatusController::verifyReferenceCode'
+    _format: json
+  requirements:
+    # Controller requires the Nuxt service authorization header and flood limits.
+    _access: 'TRUE'
+    reference_number: '[A-Za-z0-9][A-Za-z0-9-]{2,63}'
+  methods: [POST]
+
+beantragt_status.application_lookup:
+  path: '/api/application-status/{public_status_token}'
+  defaults:
+    _controller: '\Drupal\beantragt_status\Controller\StatusController::getApplicationStatus'
+    _format: json
+  requirements:
+    # Public status by a random public status token, non-PII response.
+    _access: 'TRUE'
+    public_status_token: '[A-Za-z0-9_-]{32,96}'
+  methods: [GET]
+
+beantragt_status.api_v1_application_status:
+  path: '/api/v1/status/{public_status_token}'
+  defaults:
+    _controller: '\Drupal\beantragt_status\Controller\StatusController::getApplicationStatusV1'
+    _format: json
+  requirements:
+    # Public status by a random public status token, non-PII response.
+    _access: 'TRUE'
+    public_status_token: '[^/]+'
+  methods: [GET]

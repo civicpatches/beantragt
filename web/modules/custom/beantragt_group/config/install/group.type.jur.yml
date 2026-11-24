@@ -1,0 +1,11 @@
+langcode: de
+status: true
+dependencies: {  }
+id: jur
+label: Jurisdiction
+description: "Jurisdiktion (Stadt/Gemeinde). Hierarchische Zugriffssteuerung fuer Formulare und Antraege."
+new_revision: true
+creator_membership: true
+creator_wizard: true
+creator_roles:
+  - jur-admin

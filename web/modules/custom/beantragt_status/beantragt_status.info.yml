@@ -1,0 +1,8 @@
+name: Beantragt Status
+type: module
+description: 'Public status lookup endpoints. Allows non-PII application status checks without authentication.'
+core_version_requirement: ^11
+package: Beantragt
+dependencies:
+  - beantragt_application:beantragt_application
+  - beantragt_roles_api:beantragt_roles_api

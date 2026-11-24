@@ -1,0 +1,7 @@
+key.provider.beantragt_applicant_env:
+  type: mapping
+  label: 'Beantragt applicant environment key provider settings'
+  mapping:
+    env_variable:
+      type: string
+      label: 'Environment variable'

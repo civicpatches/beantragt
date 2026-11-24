@@ -1,0 +1,843 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:beantragt:test:contract:s00000096",
+  "type": "object",
+  "title": "Synthetic nested delivery contract",
+  "properties": {
+    "GSynthetic078": {
+      "items": {
+        "title": "Synthetic repeated item",
+        "description": "Fixture array item",
+        "properties": {
+          "GSynthetic070": {
+            "type": "object",
+            "properties": {
+              "FSynthetic003": {
+                "type": "string",
+                "title": "Synthetic value",
+                "enum": [
+                  "001",
+                  "002"
+                ]
+              },
+              "FSynthetic008": {
+                "type": "string",
+                "title": "Synthetic value",
+                "format": "date"
+              },
+              "FSynthetic009": {
+                "type": "string",
+                "title": "Synthetic value",
+                "format": "date"
+              },
+              "FSynthetic010": {
+                "items": {
+                  "type": "string",
+                  "title": "Synthetic value",
+                  "enum": [
+                    "001",
+                    "002",
+                    "003",
+                    "004",
+                    "005"
+                  ],
+                  "description": "Fixture array item"
+                },
+                "type": "array"
+              },
+              "FSynthetic011": {
+                "items": {
+                  "type": "string",
+                  "title": "Synthetic value",
+                  "description": "Fixture array item"
+                },
+                "type": "array"
+              },
+              "FSynthetic051": {
+                "type": "string",
+                "title": "Synthetic value"
+              },
+              "FSynthetic052": {
+                "type": "string",
+                "title": "Synthetic value"
+              },
+              "GSynthetic090": {
+                "type": "object",
+                "properties": {
+                  "FSynthetic054": {
+                    "type": "integer",
+                    "title": "Synthetic value",
+                    "enum": [
+                      1
+                    ]
+                  },
+                  "FSynthetic055": {
+                    "type": "integer",
+                    "title": "Synthetic value",
+                    "enum": [
+                      1
+                    ]
+                  },
+                  "FSynthetic056": {
+                    "type": "integer",
+                    "title": "Synthetic value",
+                    "enum": [
+                      1850
+                    ]
+                  }
+                },
+                "required": [
+                  "FSynthetic056"
+                ],
+                "title": "Synthetic group"
+              },
+              "GSynthetic094": {
+                "type": "object",
+                "properties": {
+                  "FSynthetic066": {
+                    "type": "string",
+                    "title": "Synthetic value",
+                    "enum": [
+                      "001",
+                      "002"
+                    ]
+                  },
+                  "GSynthetic093": {
+                    "type": "object",
+                    "properties": {
+                      "GSynthetic091": {
+                        "type": "object",
+                        "properties": {
+                          "FSynthetic060": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          },
+                          "FSynthetic061": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          },
+                          "FSynthetic062": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          },
+                          "FSynthetic063": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          },
+                          "FSynthetic064": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          }
+                        },
+                        "title": "Synthetic group"
+                      },
+                      "GSynthetic092": {
+                        "type": "object",
+                        "properties": {
+                          "FSynthetic062": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          },
+                          "FSynthetic063": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          },
+                          "FSynthetic065": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          }
+                        },
+                        "title": "Synthetic group"
+                      }
+                    },
+                    "title": "Synthetic group"
+                  }
+                },
+                "required": [
+                  "FSynthetic066"
+                ],
+                "title": "Synthetic group"
+              }
+            },
+            "required": [
+              "FSynthetic051",
+              "GSynthetic090",
+              "GSynthetic094",
+              "FSynthetic003",
+              "FSynthetic010",
+              "FSynthetic011"
+            ],
+            "title": "Synthetic group"
+          },
+          "GSynthetic071": {
+            "type": "object",
+            "properties": {
+              "FSynthetic004": {
+                "type": "string",
+                "title": "Synthetic value",
+                "enum": [
+                  "001",
+                  "002",
+                  "003",
+                  "004",
+                  "005",
+                  "006",
+                  "007",
+                  "008",
+                  "999"
+                ]
+              },
+              "FSynthetic031": {
+                "type": "string",
+                "title": "Synthetic value"
+              },
+              "GSynthetic072": {
+                "type": "object",
+                "properties": {
+                  "FSynthetic017": {
+                    "type": "string",
+                    "title": "Synthetic value",
+                    "enum": [
+                      "001",
+                      "002"
+                    ]
+                  },
+                  "FSynthetic018": {
+                    "type": "string",
+                    "title": "Synthetic value",
+                    "format": "date"
+                  },
+                  "FSynthetic019": {
+                    "type": "string",
+                    "title": "Synthetic value",
+                    "format": "date"
+                  },
+                  "FSynthetic020": {
+                    "type": "string",
+                    "title": "Synthetic value",
+                    "format": "date"
+                  }
+                },
+                "required": [
+                  "FSynthetic017",
+                  "FSynthetic018"
+                ],
+                "title": "Synthetic group"
+              },
+              "GSynthetic079": {
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "FSynthetic049": {
+                      "type": "string",
+                      "title": "Synthetic value",
+                      "format": "date"
+                    },
+                    "FSynthetic050": {
+                      "type": "string",
+                      "title": "Synthetic value",
+                      "format": "date"
+                    }
+                  },
+                  "title": "Synthetic repeated item",
+                  "description": "Fixture array item"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "FSynthetic004",
+              "GSynthetic072",
+              "GSynthetic079"
+            ],
+            "title": "Synthetic group"
+          },
+          "GSynthetic073": {
+            "type": "object",
+            "properties": {
+              "FSynthetic005": {
+                "type": "boolean",
+                "title": "Synthetic value"
+              },
+              "FSynthetic006": {
+                "type": "boolean",
+                "title": "Synthetic value"
+              },
+              "FSynthetic007": {
+                "type": "boolean",
+                "title": "Synthetic value"
+              },
+              "FSynthetic042": {
+                "type": "boolean",
+                "title": "Synthetic value"
+              },
+              "FSynthetic043": {
+                "type": "string",
+                "title": "Synthetic value"
+              },
+              "FSynthetic044": {
+                "type": "string",
+                "title": "Synthetic value"
+              },
+              "FSynthetic045": {
+                "type": "string",
+                "title": "Synthetic value"
+              },
+              "GSynthetic081": {
+                "type": "object",
+                "properties": {
+                  "FSynthetic012": {
+                    "items": {
+                      "type": "string",
+                      "title": "Synthetic value",
+                      "description": "Fixture array item"
+                    },
+                    "type": "array"
+                  },
+                  "FSynthetic037": {
+                    "items": {
+                      "type": "string",
+                      "title": "Synthetic value",
+                      "description": "Fixture array item"
+                    },
+                    "type": "array"
+                  },
+                  "FSynthetic038": {
+                    "items": {
+                      "type": "string",
+                      "title": "Synthetic value",
+                      "description": "Fixture array item"
+                    },
+                    "type": "array"
+                  }
+                },
+                "title": "Synthetic group"
+              },
+              "GSynthetic082": {
+                "type": "object",
+                "properties": {
+                  "FSynthetic002": {
+                    "type": "string",
+                    "title": "Synthetic value",
+                    "format": "date"
+                  },
+                  "FSynthetic013": {
+                    "items": {
+                      "type": "string",
+                      "title": "Synthetic value",
+                      "description": "Fixture array item"
+                    },
+                    "type": "array"
+                  },
+                  "FSynthetic015": {
+                    "type": "string",
+                    "title": "Synthetic value",
+                    "enum": [
+                      "001",
+                      "002",
+                      "003",
+                      "004"
+                    ]
+                  },
+                  "FSynthetic016": {
+                    "type": "string",
+                    "title": "Synthetic value",
+                    "format": "date"
+                  },
+                  "FSynthetic032": {
+                    "items": {
+                      "type": "string",
+                      "title": "Synthetic value",
+                      "description": "Fixture array item"
+                    },
+                    "type": "array"
+                  },
+                  "FSynthetic036": {
+                    "items": {
+                      "type": "string",
+                      "title": "Synthetic value",
+                      "description": "Fixture array item"
+                    },
+                    "type": "array"
+                  },
+                  "FSynthetic067": {
+                    "items": {
+                      "type": "string",
+                      "title": "Synthetic value",
+                      "description": "Fixture array item"
+                    },
+                    "type": "array"
+                  }
+                },
+                "title": "Synthetic group"
+              },
+              "GSynthetic083": {
+                "type": "object",
+                "properties": {
+                  "FSynthetic014": {
+                    "items": {
+                      "type": "string",
+                      "title": "Synthetic value",
+                      "description": "Fixture array item"
+                    },
+                    "type": "array"
+                  },
+                  "FSynthetic033": {
+                    "items": {
+                      "type": "string",
+                      "title": "Synthetic value",
+                      "description": "Fixture array item"
+                    },
+                    "type": "array"
+                  },
+                  "FSynthetic036": {
+                    "items": {
+                      "type": "string",
+                      "title": "Synthetic value",
+                      "description": "Fixture array item"
+                    },
+                    "type": "array"
+                  }
+                },
+                "title": "Synthetic group"
+              }
+            },
+            "required": [
+              "FSynthetic005",
+              "FSynthetic007",
+              "FSynthetic043"
+            ],
+            "title": "Synthetic group"
+          },
+          "GSynthetic074": {
+            "type": "object",
+            "properties": {
+              "FSynthetic021": {
+                "type": "number",
+                "title": "Synthetic value"
+              },
+              "FSynthetic022": {
+                "type": "number",
+                "title": "Synthetic value"
+              },
+              "FSynthetic023": {
+                "type": "string",
+                "title": "Synthetic value"
+              },
+              "FSynthetic024": {
+                "type": "string",
+                "title": "Synthetic value"
+              },
+              "FSynthetic025": {
+                "type": "string",
+                "title": "Synthetic value"
+              },
+              "FSynthetic035": {
+                "items": {
+                  "type": "string",
+                  "title": "Synthetic value",
+                  "description": "Fixture array item"
+                },
+                "type": "array",
+                "minItems": 1
+              },
+              "FSynthetic039": {
+                "items": {
+                  "type": "string",
+                  "title": "Synthetic value",
+                  "description": "Fixture array item"
+                },
+                "type": "array",
+                "minItems": 1
+              },
+              "FSynthetic041": {
+                "items": {
+                  "type": "string",
+                  "title": "Synthetic value",
+                  "description": "Fixture array item"
+                },
+                "type": "array",
+                "minItems": 1
+              }
+            },
+            "required": [
+              "FSynthetic023",
+              "FSynthetic024",
+              "FSynthetic025",
+              "FSynthetic035",
+              "FSynthetic039",
+              "FSynthetic041"
+            ],
+            "title": "Synthetic group"
+          },
+          "GSynthetic075": {
+            "type": "object",
+            "properties": {
+              "FSynthetic028": {
+                "type": "string",
+                "title": "Synthetic value",
+                "enum": [
+                  "001",
+                  "002",
+                  "003",
+                  "004",
+                  "005",
+                  "006",
+                  "007"
+                ]
+              },
+              "FSynthetic029": {
+                "type": "string",
+                "title": "Synthetic value"
+              },
+              "FSynthetic030": {
+                "items": {
+                  "type": "string",
+                  "title": "Synthetic value",
+                  "description": "Fixture array item"
+                },
+                "type": "array",
+                "minItems": 1
+              },
+              "FSynthetic040": {
+                "items": {
+                  "type": "string",
+                  "title": "Synthetic value",
+                  "description": "Fixture array item"
+                },
+                "type": "array"
+              },
+              "GSynthetic076": {
+                "type": "object",
+                "properties": {
+                  "FSynthetic001": {
+                    "type": "string",
+                    "title": "Synthetic value"
+                  },
+                  "FSynthetic026": {
+                    "type": "string",
+                    "title": "Synthetic value",
+                    "enum": [
+                      "001",
+                      "002",
+                      "003",
+                      "004"
+                    ]
+                  },
+                  "FSynthetic027": {
+                    "type": "string",
+                    "title": "Synthetic value"
+                  },
+                  "GSynthetic085": {
+                    "type": "object",
+                    "properties": {
+                      "FSynthetic068": {
+                        "type": "string",
+                        "title": "Synthetic value"
+                      },
+                      "GSynthetic084": {
+                        "type": "object",
+                        "properties": {
+                          "FSynthetic034": {
+                            "type": "boolean",
+                            "title": "Synthetic value"
+                          },
+                          "FSynthetic046": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          },
+                          "FSynthetic057": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          },
+                          "FSynthetic058": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          }
+                        },
+                        "title": "Synthetic group"
+                      },
+                      "GSynthetic091": {
+                        "type": "object",
+                        "properties": {
+                          "FSynthetic060": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          },
+                          "FSynthetic061": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          },
+                          "FSynthetic062": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          },
+                          "FSynthetic063": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          },
+                          "FSynthetic064": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          }
+                        },
+                        "title": "Synthetic group"
+                      }
+                    },
+                    "title": "Synthetic group"
+                  }
+                },
+                "required": [
+                  "FSynthetic026",
+                  "FSynthetic001",
+                  "FSynthetic027"
+                ],
+                "title": "Synthetic group"
+              },
+              "GSynthetic077": {
+                "type": "object",
+                "properties": {
+                  "FSynthetic001": {
+                    "type": "string",
+                    "title": "Synthetic value"
+                  },
+                  "FSynthetic026": {
+                    "type": "string",
+                    "title": "Synthetic value",
+                    "enum": [
+                      "001",
+                      "002",
+                      "003",
+                      "004"
+                    ]
+                  },
+                  "FSynthetic027": {
+                    "type": "string",
+                    "title": "Synthetic value"
+                  },
+                  "GSynthetic085": {
+                    "type": "object",
+                    "properties": {
+                      "FSynthetic068": {
+                        "type": "string",
+                        "title": "Synthetic value"
+                      },
+                      "GSynthetic084": {
+                        "type": "object",
+                        "properties": {
+                          "FSynthetic034": {
+                            "type": "boolean",
+                            "title": "Synthetic value"
+                          },
+                          "FSynthetic046": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          },
+                          "FSynthetic057": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          },
+                          "FSynthetic058": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          }
+                        },
+                        "title": "Synthetic group"
+                      },
+                      "GSynthetic091": {
+                        "type": "object",
+                        "properties": {
+                          "FSynthetic060": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          },
+                          "FSynthetic061": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          },
+                          "FSynthetic062": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          },
+                          "FSynthetic063": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          },
+                          "FSynthetic064": {
+                            "type": "string",
+                            "title": "Synthetic value"
+                          }
+                        },
+                        "title": "Synthetic group"
+                      }
+                    },
+                    "title": "Synthetic group"
+                  }
+                },
+                "title": "Synthetic group"
+              }
+            },
+            "required": [
+              "GSynthetic076",
+              "FSynthetic028",
+              "FSynthetic030",
+              "FSynthetic040"
+            ],
+            "title": "Synthetic group"
+          }
+        },
+        "type": "object",
+        "required": [
+          "GSynthetic070",
+          "GSynthetic071",
+          "GSynthetic073",
+          "GSynthetic075",
+          "GSynthetic074"
+        ]
+      },
+      "type": "array",
+      "minItems": 1
+    },
+    "GSynthetic069": {
+      "type": "object",
+      "properties": {
+        "FSynthetic068": {
+          "$ref": "#/$defs/syntheticName"
+        },
+        "GSynthetic084": {
+          "type": "object",
+          "properties": {
+            "FSynthetic034": {
+              "type": "boolean",
+              "title": "Synthetic value"
+            },
+            "FSynthetic046": {
+              "type": "string",
+              "title": "Synthetic value",
+              "pattern": "^[^@ ]+@[^@ ]+[.][^@ ]+$"
+            },
+            "FSynthetic057": {
+              "type": "string",
+              "title": "Synthetic value"
+            },
+            "FSynthetic058": {
+              "type": "string",
+              "title": "Synthetic value"
+            }
+          },
+          "title": "Synthetic group"
+        },
+        "GSynthetic086": {
+          "type": "object",
+          "properties": {
+            "FSynthetic051": {
+              "type": "string",
+              "title": "Synthetic value"
+            },
+            "FSynthetic052": {
+              "type": "string",
+              "title": "Synthetic value"
+            },
+            "FSynthetic053": {
+              "type": "string",
+              "title": "Synthetic value"
+            },
+            "GSynthetic080": {
+              "type": "object",
+              "properties": {
+                "FSynthetic034": {
+                  "type": "boolean",
+                  "title": "Synthetic value"
+                },
+                "FSynthetic057": {
+                  "type": "string",
+                  "title": "Synthetic value"
+                },
+                "FSynthetic058": {
+                  "type": "string",
+                  "title": "Synthetic value"
+                },
+                "FSynthetic059": {
+                  "type": "string",
+                  "title": "Synthetic value"
+                }
+              },
+              "title": "Synthetic group"
+            }
+          },
+          "required": [
+            "FSynthetic051"
+          ],
+          "title": "Synthetic group"
+        },
+        "GSynthetic093": {
+          "type": "object",
+          "properties": {
+            "GSynthetic091": {
+              "type": "object",
+              "properties": {
+                "FSynthetic060": {
+                  "type": "string",
+                  "title": "Synthetic value"
+                },
+                "FSynthetic061": {
+                  "type": "string",
+                  "title": "Synthetic value"
+                },
+                "FSynthetic062": {
+                  "type": "string",
+                  "title": "Synthetic value"
+                },
+                "FSynthetic063": {
+                  "type": "string",
+                  "title": "Synthetic value"
+                },
+                "FSynthetic064": {
+                  "type": "string",
+                  "title": "Synthetic value"
+                }
+              },
+              "title": "Synthetic group"
+            },
+            "GSynthetic092": {
+              "type": "object",
+              "properties": {
+                "FSynthetic062": {
+                  "type": "string",
+                  "title": "Synthetic value"
+                },
+                "FSynthetic063": {
+                  "type": "string",
+                  "title": "Synthetic value"
+                },
+                "FSynthetic065": {
+                  "type": "string",
+                  "title": "Synthetic value"
+                }
+              },
+              "title": "Synthetic group"
+            }
+          },
+          "title": "Synthetic group"
+        }
+      },
+      "required": [
+        "FSynthetic068",
+        "GSynthetic093",
+        "GSynthetic084",
+        "GSynthetic086"
+      ],
+      "title": "Synthetic group"
+    }
+  },
+  "required": [
+    "GSynthetic069",
+    "GSynthetic078"
+  ],
+  "$defs": {
+    "syntheticName": {
+      "type": "string",
+      "title": "Synthetic value"
+    }
+  }
+}

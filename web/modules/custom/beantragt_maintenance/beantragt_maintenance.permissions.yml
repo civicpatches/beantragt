@@ -1,0 +1,4 @@
+administer beantragt maintenance:
+  title: 'Administer beantragt maintenance mode'
+  description: 'Enable or disable the installation-wide maintenance mode.'
+  restrict access: true

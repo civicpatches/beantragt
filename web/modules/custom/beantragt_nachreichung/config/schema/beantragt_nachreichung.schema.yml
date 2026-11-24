@@ -1,0 +1,7 @@
+beantragt_nachreichung.settings:
+  type: config_object
+  label: 'Nachreichung settings'
+  mapping:
+    key_version:
+      type: integer
+      label: 'Key version for new cover sheet identifiers (1 to 99)'

@@ -1,0 +1,390 @@
+<?php
+
+/**
+ * @file
+ * Install, update, and uninstall functions for beantragt_applicant.
+ */
+
+declare(strict_types=1);
+
+use Drupal\beantragt_applicant\Entity\Applicant;
+use Drupal\beantragt_applicant\Entity\ApplicantInterface;
+use Drupal\Core\Extension\Requirement\RequirementSeverity;
+use Drupal\Core\Field\FieldStorageDefinitionInterface;
+use Drupal\Core\Utility\UpdateException;
+use Drupal\encrypt\EncryptionProfileInterface;
+use Drupal\field_encrypt\Entity\FieldEncryptEntityType;
+
+/**
+ * Implements hook_install().
+ */
+function beantragt_applicant_install(): void {
+  \Drupal::configFactory()
+    ->getEditable('field_encrypt.settings')
+    ->set('encryption_profile', 'beantragt_applicant')
+    ->set('make_entities_uncacheable', TRUE)
+    ->save(TRUE);
+}
+
+/**
+ * Implements hook_requirements().
+ *
+ * Reports an error when the applicant encryption key is unavailable.
+ */
+function beantragt_applicant_requirements(string $phase): array {
+  $requirements = [];
+
+  if (!in_array($phase, ['install', 'runtime'], TRUE)) {
+    return $requirements;
+  }
+
+  $raw_key = getenv('BEANTRAGT_APPLICATION_DATA_ENCRYPTION_KEY');
+  $has_valid_key = is_string($raw_key) && strlen($raw_key) >= 32;
+
+  if (!$has_valid_key) {
+    $requirements['beantragt_applicant_encryption_key'] = [
+      'title' => t('Beantragt Applicant field encryption'),
+      'value' => t('BEANTRAGT_APPLICATION_DATA_ENCRYPTION_KEY is missing or invalid'),
+      'description' => t('Applicant PII fields such as IBAN and tax ID require BEANTRAGT_APPLICATION_DATA_ENCRYPTION_KEY with at least 32 bytes of key material. Drupal Field Encrypt derives a dedicated encryption key from this value.'),
+      'severity' => RequirementSeverity::Error,
+    ];
+  }
+
+  if ($phase === 'runtime') {
+    $module_handler = \Drupal::moduleHandler();
+    if (!$module_handler->hasImplementations('entity_presave', 'field_encrypt')) {
+      $requirements['beantragt_applicant_field_encrypt_hook'] = [
+        'title' => t('Beantragt Applicant field encryption runtime'),
+        'value' => t('Field Encrypt presave hook is not registered'),
+        'description' => t('The Field Encrypt entity_presave hook is unavailable, so applicant PII could be stored without encryption. Rebuild Drupal caches to refresh a stale hook container before serving requests.'),
+        'severity' => RequirementSeverity::Error,
+      ];
+    }
+
+    if (\Drupal::config('field_encrypt.settings')->get('encryption_profile') !== 'beantragt_applicant') {
+      $requirements['beantragt_applicant_field_encrypt_profile'] = [
+        'title' => t('Beantragt Applicant field encryption runtime'),
+        'value' => t('Applicant encryption profile is not active'),
+        'description' => t('Field Encrypt is not configured to use the beantragt_applicant encryption profile. Restore the applicant profile before serving requests.'),
+        'severity' => RequirementSeverity::Error,
+      ];
+    }
+
+    $mapping = \Drupal::entityTypeManager()
+      ->getStorage('field_encrypt_entity_type')
+      ->load('applicant');
+    $base_fields = $mapping instanceof FieldEncryptEntityType
+      ? $mapping->getBaseFields()
+      : [];
+    $unmapped = array_filter(
+      ApplicantInterface::PROTECTED_FIELDS,
+      static fn(string $field_name): bool => !in_array('value', $base_fields[$field_name] ?? [], TRUE),
+    );
+    if ($unmapped !== []) {
+      $requirements['beantragt_applicant_field_encrypt_mapping'] = [
+        'title' => t('Beantragt Applicant field encryption runtime'),
+        'value' => t('Applicant Field Encrypt mapping is unavailable'),
+        'description' => t('The active Field Encrypt configuration does not map every protected applicant field. Run database updates, rebuild Drupal caches and restore the beantragt_applicant Field Encrypt mapping before serving requests.'),
+        'severity' => RequirementSeverity::Error,
+      ];
+    }
+
+    try {
+      $profile = \Drupal::entityTypeManager()
+        ->getStorage('encryption_profile')
+        ->load('beantragt_applicant');
+      if (!$profile instanceof EncryptionProfileInterface) {
+        throw new \RuntimeException('Applicant encryption profile is unavailable.');
+      }
+
+      $encryption = \Drupal::service('encryption');
+      $probe = 'beantragt-applicant-runtime-encryption-probe';
+      $ciphertext = $encryption->encrypt($probe, $profile);
+      $decrypted = $encryption->decrypt($ciphertext, $profile);
+      if (!hash_equals($probe, $decrypted)) {
+        throw new \RuntimeException('Applicant encryption roundtrip failed.');
+      }
+    }
+    catch (\Throwable) {
+      $requirements['beantragt_applicant_encryption_probe'] = [
+        'title' => t('Beantragt Applicant field encryption runtime'),
+        'value' => t('Applicant encryption runtime probe failed'),
+        'description' => t('The beantragt_applicant encryption profile could not complete a synthetic encrypt/decrypt roundtrip. Verify the encryption profile and deployment key configuration, then rebuild Drupal caches before serving requests.'),
+        'severity' => RequirementSeverity::Error,
+      ];
+    }
+  }
+
+  return $requirements;
+}
+
+/**
+ * Widen field_iban and field_tax_id columns for encrypted storage.
+ *
+ * Encrypted values (AES-256-GCM + base64) are longer than the original
+ * plaintext values. Widen from 34/20 chars to 255 chars.
+ */
+function beantragt_applicant_update_10001(): string {
+  $entity_definition_update_manager = \Drupal::entityDefinitionUpdateManager();
+
+  $iban_field = $entity_definition_update_manager->getFieldStorageDefinition('field_iban', 'applicant');
+  if ($iban_field) {
+    $iban_field->setSetting('max_length', 255);
+    $entity_definition_update_manager->updateFieldStorageDefinition($iban_field);
+  }
+
+  $tax_field = $entity_definition_update_manager->getFieldStorageDefinition('field_tax_id', 'applicant');
+  if ($tax_field) {
+    $tax_field->setSetting('max_length', 255);
+    $entity_definition_update_manager->updateFieldStorageDefinition($tax_field);
+  }
+
+  return 'Widened field_iban and field_tax_id for encrypted storage.';
+}
+
+/**
+ * Update field_session_token storage definition to set internal flag.
+ *
+ * Marks field_session_token as internal to hide it from JSON:API responses.
+ */
+function beantragt_applicant_update_10002(): string {
+  $entity_definition_update_manager = \Drupal::entityDefinitionUpdateManager();
+
+  $session_field = $entity_definition_update_manager->getFieldStorageDefinition('field_session_token', 'applicant');
+  if ($session_field) {
+    $session_field->setInternal(TRUE);
+    $entity_definition_update_manager->updateFieldStorageDefinition($session_field);
+  }
+
+  return 'Set field_session_token as internal (hidden from JSON:API).';
+}
+
+/**
+ * Removes anonymous direct access to applicant collections.
+ */
+function beantragt_applicant_update_10003(): string {
+  $role = \Drupal::entityTypeManager()->getStorage('user_role')->load('anonymous');
+  if (!$role) {
+    return 'anonymous role not found.';
+  }
+
+  $changed = FALSE;
+  foreach ([
+    'view published applicant entities',
+    'view unpublished applicant entities',
+  ] as $permission) {
+    if ($role->hasPermission($permission)) {
+      $role->revokePermission($permission);
+      $changed = TRUE;
+    }
+  }
+
+  if (!$changed) {
+    return 'Anonymous applicant collection permissions already absent.';
+  }
+
+  $role->save();
+  return 'Revoked anonymous applicant collection permissions.';
+}
+
+/**
+ * Installs the account holder and consent provenance fields on applicants.
+ *
+ * The account holder is encrypted like the IBAN: the field storage is
+ * installed first, then the Field Encrypt mapping is extended.
+ */
+function beantragt_applicant_update_10004(): string {
+  $updates = \Drupal::entityDefinitionUpdateManager();
+  $installed = [];
+  foreach (Applicant::consentBaseFieldDefinitions() as $name => $field) {
+    if ($updates->getFieldStorageDefinition($name, 'applicant') instanceof FieldStorageDefinitionInterface) {
+      continue;
+    }
+    $field->setName($name);
+    $field->setTargetEntityTypeId('applicant');
+    $updates->installFieldStorageDefinition($name, 'applicant', 'beantragt_applicant', $field);
+    $installed[] = $name;
+  }
+
+  $mapping = \Drupal::entityTypeManager()
+    ->getStorage('field_encrypt_entity_type')
+    ->load('applicant');
+  if (!$mapping instanceof FieldEncryptEntityType) {
+    throw new \RuntimeException('The applicant Field Encrypt mapping is missing; the account holder cannot be stored encrypted.');
+  }
+  $base_fields = $mapping->getBaseFields();
+  $mapped = FALSE;
+  if (!in_array('value', $base_fields['field_account_holder'] ?? [], TRUE)) {
+    $base_fields['field_account_holder'] = ['value'];
+    $mapping->setBaseFields($base_fields)->save();
+    $mapped = TRUE;
+  }
+
+  return sprintf(
+    'Applicant fields installed: %s. Account holder encryption mapping %s.',
+    $installed === [] ? 'none' : implode(', ', $installed),
+    $mapped ? 'added' : 'already present',
+  );
+}
+
+/**
+ * Installs consent revocation and login confirmation fields on applicants.
+ */
+function beantragt_applicant_update_10005(): string {
+  $updates = \Drupal::entityDefinitionUpdateManager();
+  $installed = [];
+  foreach (Applicant::revocationBaseFieldDefinitions() as $name => $field) {
+    if ($updates->getFieldStorageDefinition($name, 'applicant') instanceof FieldStorageDefinitionInterface) {
+      continue;
+    }
+    $field->setName($name);
+    $field->setTargetEntityTypeId('applicant');
+    $updates->installFieldStorageDefinition($name, 'applicant', 'beantragt_applicant', $field);
+    $installed[] = $name;
+  }
+
+  return sprintf(
+    'Applicant revocation and login confirmation fields installed: %s.',
+    $installed === [] ? 'none' : implode(', ', $installed),
+  );
+}
+
+/**
+ * Removes tax IDs and unconsented bank details from existing profiles.
+ *
+ * Since the consent slice, the tax ID never reaches a profile (section 139b
+ * AO) and IBAN and account holder only with a proven bank consent. Profiles
+ * synced before that may still hold them without any consent. This clears
+ * field_tax_id on every profile and IBAN and account holder on every
+ * profile without a bank consent time, so the stored data matches what
+ * "Meine Daten" and the documentation say. Applications and their consent
+ * records are not touched.
+ */
+function beantragt_applicant_update_10006(array &$sandbox): string {
+  $storage = \Drupal::entityTypeManager()->getStorage('applicant');
+  if (!isset($sandbox['ids'])) {
+    $sandbox['ids'] = array_values($storage->getQuery()->accessCheck(FALSE)->sort('id')->execute());
+    $sandbox['total'] = count($sandbox['ids']);
+    $sandbox['tax_ids'] = 0;
+    $sandbox['bank'] = 0;
+    $sandbox['failed'] = [];
+  }
+
+  $chunk = array_splice($sandbox['ids'], 0, 50);
+  foreach ($chunk === [] ? [] : $storage->loadMultiple($chunk) as $applicant) {
+    if (!$applicant instanceof ApplicantInterface) {
+      continue;
+    }
+    $has_value = static fn(string $field_name): bool => $applicant->hasField($field_name)
+      && !$applicant->get($field_name)->isEmpty()
+      && trim((string) $applicant->get($field_name)->value) !== '';
+    $clear_tax_id = $has_value('field_tax_id');
+    $bank_consent = $applicant->hasField('field_bank_consent_time')
+      && !$applicant->get('field_bank_consent_time')->isEmpty()
+      && (int) $applicant->get('field_bank_consent_time')->value > 0;
+    $clear_bank = !$bank_consent && ($has_value('field_iban') || $has_value('field_account_holder'));
+    if (!$clear_tax_id && !$clear_bank) {
+      continue;
+    }
+    if ($clear_tax_id) {
+      $applicant->set('field_tax_id', NULL);
+    }
+    if ($clear_bank) {
+      $applicant->set('field_iban', NULL);
+      if ($applicant->hasField('field_account_holder')) {
+        $applicant->set('field_account_holder', NULL);
+      }
+    }
+    try {
+      $applicant->save();
+    }
+    catch (\Throwable $exception) {
+      $sandbox['failed'][] = (int) $applicant->id();
+      \Drupal::logger('beantragt_applicant')->error('Clearing tax ID or unconsented bank details failed for applicant @id: @class', [
+        '@id' => $applicant->id(),
+        '@class' => $exception::class,
+      ]);
+      continue;
+    }
+    // Counted only once the cleared values are stored.
+    $sandbox['tax_ids'] += $clear_tax_id ? 1 : 0;
+    $sandbox['bank'] += $clear_bank ? 1 : 0;
+  }
+
+  $sandbox['#finished'] = $sandbox['total'] === 0 || $sandbox['ids'] === []
+    ? 1
+    : 1 - (count($sandbox['ids']) / $sandbox['total']);
+  if ($sandbox['#finished'] < 1) {
+    return '';
+  }
+
+  $message = sprintf(
+    'Cleared the tax ID on %d applicant profiles and unconsented bank details on %d.',
+    $sandbox['tax_ids'],
+    $sandbox['bank'],
+  );
+  if ($sandbox['failed'] !== []) {
+    // A profile that still holds a tax ID or unconsented bank details must
+    // not count as cleaned: the update fails, stays pending and runs again
+    // on the next database update (already cleared profiles are skipped).
+    \Drupal::logger('beantragt_applicant')->error($message . ' Failed to save applicants: @ids.', [
+      '@ids' => implode(', ', $sandbox['failed']),
+    ]);
+    throw new UpdateException($message . ' Failed to save applicants: ' . implode(', ', $sandbox['failed']) . '; the update stays pending, fix the cause (see the beantragt_applicant log) and run it again. Later updates of beantragt_applicant (10007, consent proof fields) stay pending until this update succeeds.');
+  }
+  \Drupal::logger('beantragt_applicant')->notice($message);
+  return $message;
+}
+
+/**
+ * Installs the consent text hash, locale and Stelle fields on applicants.
+ *
+ * The profile keeps the proof of its latest consent per kind (text hash,
+ * locale and the name of the Stelle the text named, next to time, version
+ * and source), so the proof survives the deletion of the source application
+ * and a later rename of the Stelle. Existing stamps stay without these values
+ * until the next consented sync; the source application still holds them as
+ * long as it exists.
+ */
+function beantragt_applicant_update_10007(): string {
+  $updates = \Drupal::entityDefinitionUpdateManager();
+  $installed = [];
+  foreach (Applicant::consentProofBaseFieldDefinitions() as $name => $field) {
+    if ($updates->getFieldStorageDefinition($name, 'applicant') instanceof FieldStorageDefinitionInterface) {
+      continue;
+    }
+    $field->setName($name);
+    $field->setTargetEntityTypeId('applicant');
+    $updates->installFieldStorageDefinition($name, 'applicant', 'beantragt_applicant', $field);
+    $installed[] = $name;
+  }
+
+  return sprintf(
+    'Applicant consent proof fields installed: %s.',
+    $installed === [] ? 'none' : implode(', ', $installed),
+  );
+}
+
+/**
+ * Installs the internal per-field consent proof storage.
+ */
+function beantragt_applicant_update_10008(): void {
+  $updates = \Drupal::entityDefinitionUpdateManager();
+  $name = Applicant::CONSENT_PROOF_FIELD;
+  if ($updates->getFieldStorageDefinition($name, 'applicant') === NULL) {
+    $updates->installFieldStorageDefinition($name, 'applicant', 'beantragt_applicant', Applicant::consentProofByFieldDefinition());
+  }
+}
+
+/**
+ * Invalidates applicant session bindings that may predate token hashing.
+ */
+function beantragt_applicant_update_10009(): string {
+  // A legacy plaintext token can have the same shape as a SHA-256 digest.
+  // Revoke all old bindings once. New session bindings are stored as digests.
+  \Drupal::database()->update('applicant')
+    ->fields(['field_session_token' => NULL])
+    ->isNotNull('field_session_token')
+    ->execute();
+  return 'Invalidated existing applicant session token bindings.';
+}

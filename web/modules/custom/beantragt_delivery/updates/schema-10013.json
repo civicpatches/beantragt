@@ -1,0 +1,29 @@
+{
+    "assignment_fields": {
+        "transfer_trigger": {
+            "type": "varchar_ascii",
+            "length": 16,
+            "not null": true,
+            "default": "submission"
+        },
+        "trigger_flag": {
+            "type": "varchar_ascii",
+            "length": 32,
+            "not null": true,
+            "default": "hand_over"
+        }
+    },
+    "transfer_plan_fields": {
+        "trigger_source": {
+            "type": "varchar_ascii",
+            "length": 16,
+            "not null": true,
+            "default": "submission"
+        },
+        "actor_uid": {
+            "type": "int",
+            "unsigned": true,
+            "not null": false
+        }
+    }
+}

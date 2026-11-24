@@ -1,0 +1,17 @@
+# veraPDF-rest server configuration for the docgen boundary.
+# Mounted read-only over the image default. Differences to the image default:
+# no admin connector (port 8081), console logging only (no log files, so the
+# root filesystem can stay read-only), upload limit in MB.
+server:
+  applicationConnectors:
+    - type: http
+      port: 8080
+  adminConnectors: []
+logging:
+  level: WARN
+  loggers:
+    "org.verapdf":
+      level: WARN
+  appenders:
+    - type: console
+maxFileSize: ${VERAPDF_MAX_FILE_SIZE:-25}

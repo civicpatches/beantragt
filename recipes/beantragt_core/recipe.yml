@@ -1,0 +1,20 @@
+name: 'Beantragt Core'
+description: 'Central entity model for beantragt: form schemas, applications, workflow statuses, and the computed-field evaluator contract. The nucleus that beantragt feature recipes build around.'
+type: 'Site'
+install:
+  # Order is deps-first for readability; Drupal resolves the full dependency
+  # tree anyway. Installing beantragt_application transitively enables its
+  # contrib deps (jsonapi, basic_auth, group, json_form_widget) plus the
+  # other core modules listed here.
+  - beantragt_schema
+  - beantragt_workflow_status
+  - beantragt_compute_api
+  - beantragt_application
+config:
+  actions:
+    # JSON:API must be in write mode for schema persistence and application
+    # submission. jsonapi is enabled transitively via
+    # beantragt_schema, so its settings exist by the time this action runs.
+    jsonapi.settings:
+      simpleConfigUpdate:
+        read_only: false

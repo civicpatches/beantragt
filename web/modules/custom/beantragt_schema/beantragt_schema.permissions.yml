@@ -1,0 +1,41 @@
+administer form_schema entities:
+  title: 'Administer Form Schema entities'
+  description: 'Full administrative access to Form Schema entities.'
+  restrict access: true
+
+view published form_schema entities:
+  title: 'View published Form Schema entities'
+
+view unpublished form_schema entities:
+  title: 'View unpublished Form Schema entities'
+
+create form_schema entities:
+  title: 'Create Form Schema entities'
+  description: 'Allows creating new form schemas, including via JSON:API POST. Grant only to trusted roles (administrator, department_admin, nuxt_service).'
+  restrict access: true
+
+edit own form_schema entities:
+  title: 'Edit own Form Schema entities'
+
+edit any form_schema entities:
+  title: 'Edit any Form Schema entities'
+  description: 'Allows editing all form schemas, including via JSON:API PATCH. Grant only to trusted roles (administrator, department_admin, nuxt_service).'
+  restrict access: true
+
+delete own form_schema entities:
+  title: 'Delete own Form Schema entities'
+
+delete any form_schema entities:
+  title: 'Delete any Form Schema entities'
+  description: 'Allows deleting any form schema, including via JSON:API DELETE. Grant only to trusted roles (administrator, department_admin).'
+  restrict access: true
+
+publish form_schema entities:
+  title: 'Publish Form Schema entities'
+  description: 'Formulare veröffentlichen. Required for every save that makes a form more visible: workflow status to published, published flag on, or scope intranet to internet. Not implied by "Administer Form Schema entities". Grant only to trusted roles (administrator, department_admin).'
+  restrict access: true
+
+record form setup recommendations:
+  title: 'Record form setup recommendations'
+  description: 'Allows the Nuxt service account to store verified information sheet recommendations of the guided form setup (internal route, contract #181). Grant only to service_account.'
+  restrict access: true

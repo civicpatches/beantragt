@@ -1,0 +1,11 @@
+services:
+  logger.channel.beantragt_applicant:
+    parent: logger.channel_base
+    arguments: ['beantragt_applicant']
+
+  beantragt_applicant.manager:
+    class: Drupal\beantragt_applicant\Service\ApplicantManager
+    arguments:
+      - '@entity_type.manager'
+      - '@logger.factory'
+      - '@lock'

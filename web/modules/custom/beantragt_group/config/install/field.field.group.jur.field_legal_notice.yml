@@ -1,0 +1,19 @@
+langcode: de
+status: true
+dependencies:
+  config:
+    - field.storage.group.field_legal_notice
+    - group.type.jur
+id: group.jur.field_legal_notice
+field_name: field_legal_notice
+entity_type: group
+bundle: jur
+label: 'Impressum'
+description: 'Impressum / rechtliche Hinweise dieser Jurisdiktion (HTML erlaubt).'
+required: false
+translatable: false
+default_value: {  }
+default_value_callback: ''
+settings:
+  allowed_formats: {  }
+field_type: text_long

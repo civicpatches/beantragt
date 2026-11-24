@@ -1,0 +1,10 @@
+name: Beantragt Notification
+type: module
+description: 'Email notifications for workflow transitions and application lifecycle events.'
+core_version_requirement: ^11
+package: Beantragt
+dependencies:
+  - drupal:language
+  - beantragt_workflow:beantragt_workflow
+  - beantragt_application:beantragt_application
+  - beantragt_group:beantragt_group

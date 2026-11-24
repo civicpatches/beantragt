@@ -1,0 +1,6 @@
+beantragt_sso.settings:
+  title: 'SSO identity providers'
+  description: 'Configure BundID, ADFS, and other SAML 2.0 identity providers for SSO.'
+  parent: system.admin_config_system
+  route_name: beantragt_sso.settings
+  weight: 40

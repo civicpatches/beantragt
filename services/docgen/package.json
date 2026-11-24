@@ -1,0 +1,23 @@
+{
+  "name": "@beantragt/docgen",
+  "version": "0.1.0",
+  "description": "Stateless DOCX template rendering and PDF/A-2b finalization service for beantragt.ai",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=24.15.0 <25"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test 'test/unit/**/*.test.js'",
+    "test:integration": "node --test --test-concurrency=1 'test/integration/**/*.test.js'",
+    "check:deps": "node scripts/check-dependency-tree.mjs"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "0.9.12",
+    "docxtemplater": "3.71.0",
+    "pizzip": "3.3.0"
+  }
+}

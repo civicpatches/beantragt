@@ -1,0 +1,138 @@
+{
+    "binding_fields": {
+        "scope_group_id": {
+            "type": "int",
+            "unsigned": true,
+            "not null": false
+        },
+        "integration_mapping_version": {
+            "type": "int",
+            "unsigned": true,
+            "not null": false
+        },
+        "form_schema_revision_id": {
+            "type": "int",
+            "unsigned": true,
+            "not null": false
+        },
+        "dispatch_approved_uid": {
+            "type": "int",
+            "unsigned": true,
+            "not null": false
+        },
+        "dispatch_approved_at": {
+            "type": "int",
+            "unsigned": true,
+            "not null": false
+        },
+        "integration_assignment_uuid": {
+            "type": "varchar_ascii",
+            "length": 36,
+            "not null": false
+        },
+        "integration_connection_uuid": {
+            "type": "varchar_ascii",
+            "length": 36,
+            "not null": false
+        },
+        "integration_mapping_uuid": {
+            "type": "varchar_ascii",
+            "length": 36,
+            "not null": false
+        },
+        "integration_mapping_checksum": {
+            "type": "varchar_ascii",
+            "length": 64,
+            "not null": false
+        },
+        "form_schema_uuid": {
+            "type": "varchar_ascii",
+            "length": 36,
+            "not null": false
+        },
+        "service_urn": {
+            "type": "varchar_ascii",
+            "length": 255,
+            "not null": false
+        },
+        "contract_key": {
+            "type": "varchar_ascii",
+            "length": 128,
+            "not null": false
+        },
+        "contract_version": {
+            "type": "varchar_ascii",
+            "length": 32,
+            "not null": false
+        },
+        "payload_reference": {
+            "type": "varchar_ascii",
+            "length": 255,
+            "not null": false
+        },
+        "payload_sha256": {
+            "type": "varchar_ascii",
+            "length": 64,
+            "not null": false
+        },
+        "dispatch_mode": {
+            "type": "varchar_ascii",
+            "length": 16,
+            "not null": false
+        },
+        "dispatch_approval_status": {
+            "type": "varchar_ascii",
+            "length": 16,
+            "not null": false
+        },
+        "connection_snapshot": {
+            "type": "text",
+            "size": "big",
+            "not null": false
+        },
+        "validation_errors": {
+            "type": "text",
+            "size": "big",
+            "not null": false
+        },
+        "legacy_eligible": {
+            "type": "int",
+            "size": "tiny",
+            "not null": false
+        }
+    },
+    "tables": {
+        "beantragt_transfer_payload": {
+            "fields": {
+                "uuid": {
+                    "type": "varchar_ascii",
+                    "length": 36,
+                    "not null": true
+                },
+                "application_id": {
+                    "type": "int",
+                    "unsigned": true,
+                    "not null": true
+                },
+                "ciphertext": {
+                    "type": "text",
+                    "size": "big",
+                    "not null": true
+                },
+                "created": {
+                    "type": "int",
+                    "unsigned": true,
+                    "not null": true
+                }
+            },
+            "primary key": [
+                "uuid"
+            ],
+            "indexes": {
+                "application": [
+                    "application_id"
+                ]
+            }
+        }
+    }
+}

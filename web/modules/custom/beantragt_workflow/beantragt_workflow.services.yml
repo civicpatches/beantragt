@@ -1,0 +1,24 @@
+services:
+  beantragt_workflow.workflow_manager:
+    class: Drupal\beantragt_workflow\Service\WorkflowManager
+    arguments:
+      - '@config.factory'
+      - '@current_user'
+      - '@event_dispatcher'
+      - '@logger.factory'
+      - '@entity_type.manager'
+      - '@beantragt_application.effective_workflow_resolver'
+      - '@datetime.time'
+
+  beantragt_workflow.application_router:
+    class: Drupal\beantragt_workflow\Service\ApplicationRouter
+    arguments:
+      - '@entity_type.manager'
+      - '@logger.factory'
+
+  beantragt_workflow.semantic_status_changer:
+    class: Drupal\beantragt_workflow\Service\SemanticStatusChanger
+    arguments:
+      - '@entity_type.manager'
+      - '@logger.factory'
+      - '@beantragt_application.effective_workflow_resolver'

@@ -1,0 +1,15 @@
+entity.form_schema_group.canonical:
+  route_name: entity.form_schema_group.canonical
+  base_route: entity.form_schema_group.canonical
+  title: 'View'
+
+entity.form_schema_group.edit_form:
+  route_name: entity.form_schema_group.edit_form
+  base_route: entity.form_schema_group.canonical
+  title: 'Edit'
+
+entity.form_schema_group.delete_form:
+  route_name: entity.form_schema_group.delete_form
+  base_route: entity.form_schema_group.canonical
+  title: 'Delete'
+  weight: 10

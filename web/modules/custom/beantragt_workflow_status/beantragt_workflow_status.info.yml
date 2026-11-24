@@ -1,0 +1,7 @@
+name: 'Beantragt Workflow Status'
+type: module
+description: 'Provides per-workspace workflow status definitions and transition graphs.'
+core_version_requirement: ^11
+package: Beantragt
+dependencies:
+  - drupal:group

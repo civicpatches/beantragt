@@ -1,0 +1,79 @@
+services:
+  logger.channel.beantragt_nachreichung:
+    parent: logger.channel_base
+    arguments: ['beantragt_nachreichung']
+
+  beantragt_nachreichung.hasher:
+    class: Drupal\beantragt_nachreichung\Code\CoverCodeHasher
+    arguments: ['@beantragt_application.data_protection', '@config.factory', '@state', '@logger.channel.beantragt_nachreichung']
+
+  beantragt_nachreichung.cover_codes:
+    class: Drupal\beantragt_nachreichung\Repository\CoverCodeRepository
+    arguments: ['@database', '@beantragt_nachreichung.hasher']
+
+  beantragt_nachreichung.requests:
+    class: Drupal\beantragt_nachreichung\Repository\NachforderungRepository
+    arguments: ['@database']
+
+  beantragt_nachreichung.events:
+    class: Drupal\beantragt_nachreichung\Repository\NachreichungEventLog
+    arguments: ['@database', '@datetime.time']
+
+  beantragt_nachreichung.section:
+    class: Drupal\beantragt_nachreichung\Service\NachreichungSectionValidator
+    arguments: ['@?beantragt_group.jurisdiction_config']
+    tags:
+      - { name: beantragt_jurisdiction_config_section }
+
+  beantragt_nachreichung.requested_proofs:
+    class: Drupal\beantragt_nachreichung\Service\RequestedProofs
+    arguments: ['@?beantragt_nachreichung.request_again']
+    tags:
+      - { name: service_collector, tag: beantragt_nachreichung_requested_proofs, call: addProvider }
+
+  beantragt_nachreichung.cover_sheets:
+    class: Drupal\beantragt_nachreichung\Service\CoverSheetBuilder
+    arguments: ['@beantragt_nachreichung.hasher']
+
+  beantragt_docgen.appendix:
+    class: Drupal\beantragt_nachreichung\Service\CoverSheetAppendix
+    arguments: ['@beantragt_nachreichung.section', '@beantragt_docgen.request_letter_values', '@beantragt_nachreichung.requested_proofs', '@beantragt_nachreichung.cover_sheets', '@beantragt_nachreichung.cover_codes', '@beantragt_nachreichung.requests', '@beantragt_nachreichung.events', '@beantragt_nachreichung.activation', '@entity_type.manager', '@uuid', '@logger.channel.beantragt_nachreichung']
+
+  beantragt_nachreichung.docgen_extension:
+    class: Drupal\beantragt_nachreichung\Service\NachreichungDocgenExtension
+    arguments: ['@beantragt_nachreichung.section']
+    tags:
+      - { name: beantragt_docgen_case_extension }
+
+  beantragt_nachreichung.activation:
+    class: Drupal\beantragt_nachreichung\Service\NachreichungActivation
+    arguments: ['@database', '@beantragt_nachreichung.cover_codes', '@beantragt_nachreichung.requests', '@beantragt_nachreichung.events', '@beantragt_docgen.document_repository', '@datetime.time']
+
+  beantragt_nachreichung.cleanup:
+    class: Drupal\beantragt_nachreichung\Service\NachreichungCleanup
+    arguments: ['@database']
+
+  beantragt_nachreichung.cover_print:
+    class: Drupal\beantragt_nachreichung\Service\CoverPrintService
+    arguments: ['@beantragt_nachreichung.section', '@beantragt_docgen.request_letter_values', '@beantragt_nachreichung.cover_sheets', '@beantragt_nachreichung.cover_codes', '@beantragt_nachreichung.requests', '@beantragt_nachreichung.events', '@beantragt_docgen.document_service', '@beantragt_docgen.client', '@beantragt_application.protected_access_log', '@database', '@lock', '@uuid', '@datetime.time', '@logger.channel.beantragt_nachreichung', '@beantragt_nachreichung.sources']
+
+  beantragt_nachreichung.card:
+    class: Drupal\beantragt_nachreichung\Service\NachreichungCard
+    arguments: ['@beantragt_nachreichung.section', '@beantragt_nachreichung.cover_print', '@beantragt_nachreichung.cover_codes', '@beantragt_nachreichung.requests', '@beantragt_nachreichung.receipts', '@beantragt_nachreichung.sources', '@entity_type.manager']
+
+  beantragt_nachreichung.receipts:
+    class: Drupal\beantragt_nachreichung\Repository\EingangRepository
+    arguments: ['@database']
+
+  beantragt_nachreichung.sources:
+    class: Drupal\beantragt_nachreichung\Service\NachreichungSources
+    tags:
+      - { name: service_collector, tag: beantragt_nachreichung_source, call: addSource }
+
+  beantragt_nachreichung.request_again:
+    class: Drupal\beantragt_nachreichung\Service\RequestAgainProofs
+    arguments: ['@beantragt_nachreichung.requests', '@beantragt_nachreichung.receipts']
+
+  beantragt_nachreichung.entries:
+    class: Drupal\beantragt_nachreichung\Service\NachreichungEntries
+    arguments: ['@database', '@entity_type.manager', '@file_system', '@datetime.time', '@beantragt_nachreichung.requests', '@beantragt_nachreichung.receipts', '@beantragt_nachreichung.events', '@beantragt_nachreichung.sources']

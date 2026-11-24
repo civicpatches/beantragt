@@ -1,0 +1,364 @@
+# Access is decided in the controllers, not here: DocgenControllerBase::handle()
+# checks the session and the X-CSRF-Token header of every mutation, and
+# DocgenScopeAccess checks permission, group scope and application access.
+# That way every refusal, including a missing CSRF token or permission,
+# answers with the documented {"error": {"code": "docgen.*"}} envelope
+# instead of Drupal's generic 403.
+beantragt_docgen.health:
+  path: '/api/admin/docgen/health'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCatalogController::health'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+
+beantragt_docgen.template_list:
+  path: '/api/admin/docgen/templates'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCatalogController::listTemplates'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+
+beantragt_docgen.template_upload:
+  path: '/api/admin/docgen/templates'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCatalogController::uploadTemplate'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+  methods: [POST]
+  options:
+    no_cache: 'TRUE'
+
+beantragt_docgen.template_read:
+  path: '/api/admin/docgen/templates/{template}'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCatalogController::readTemplate'
+    _format: json
+  requirements:
+    template: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+
+beantragt_docgen.template_update:
+  path: '/api/admin/docgen/templates/{template}'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCatalogController::updateTemplate'
+    _format: json
+  requirements:
+    template: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _user_is_logged_in: 'TRUE'
+  methods: [PATCH]
+  options:
+    no_cache: 'TRUE'
+
+beantragt_docgen.template_delete:
+  path: '/api/admin/docgen/templates/{template}'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCatalogController::deleteTemplate'
+    _format: json
+  requirements:
+    template: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _user_is_logged_in: 'TRUE'
+  methods: [DELETE]
+  options:
+    no_cache: 'TRUE'
+
+beantragt_docgen.template_file:
+  path: '/api/admin/docgen/templates/{template}/file'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCatalogController::templateFile'
+  requirements:
+    template: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+
+beantragt_docgen.template_release:
+  path: '/api/admin/docgen/templates/{template}/release'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCatalogController::releaseTemplate'
+    _format: json
+  requirements:
+    template: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _user_is_logged_in: 'TRUE'
+  methods: [POST]
+  options:
+    no_cache: 'TRUE'
+
+beantragt_docgen.template_version:
+  path: '/api/admin/docgen/templates/{template}/versions'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCatalogController::uploadVersion'
+    _format: json
+  requirements:
+    template: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _user_is_logged_in: 'TRUE'
+  methods: [POST]
+  options:
+    no_cache: 'TRUE'
+
+beantragt_docgen.scope_settings_read:
+  path: '/api/admin/docgen/settings'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCatalogController::scopeSettings'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+
+beantragt_docgen.scope_settings_update:
+  path: '/api/admin/docgen/settings'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCatalogController::scopeSettings'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+  methods: [PUT]
+  options:
+    no_cache: 'TRUE'
+
+beantragt_docgen.form_settings_read:
+  path: '/api/admin/docgen/forms/{form}'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCatalogController::formSettings'
+    _format: json
+  requirements:
+    form: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+
+beantragt_docgen.form_settings_update:
+  path: '/api/admin/docgen/forms/{form}'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCatalogController::formSettings'
+    _format: json
+  requirements:
+    form: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _user_is_logged_in: 'TRUE'
+  methods: [PUT]
+  options:
+    no_cache: 'TRUE'
+
+beantragt_docgen.form_variables:
+  path: '/api/admin/docgen/forms/{form}/variables'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCatalogController::formVariables'
+    _format: json
+  requirements:
+    form: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+
+beantragt_docgen.form_sample:
+  path: '/api/admin/docgen/forms/{form}/sample'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCatalogController::formSample'
+  requirements:
+    form: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+
+beantragt_docgen.form_upload:
+  path: '/api/admin/docgen/forms/{form}/templates'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCatalogController::formUpload'
+    _format: json
+  requirements:
+    form: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _user_is_logged_in: 'TRUE'
+  methods: [POST]
+  options:
+    no_cache: 'TRUE'
+
+beantragt_docgen.case_overview:
+  path: '/api/admin/applications/{application}/docgen'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCaseController::overview'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_docgen.case_create:
+  path: '/api/admin/applications/{application}/docgen/documents'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCaseController::createDocument'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+  methods: [POST]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_docgen.case_document:
+  path: '/api/admin/applications/{application}/docgen/documents/{document}'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCaseController::document'
+    _format: json
+  requirements:
+    document: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_docgen.case_discard:
+  path: '/api/admin/applications/{application}/docgen/documents/{document}'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCaseController::document'
+    _format: json
+  requirements:
+    document: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _user_is_logged_in: 'TRUE'
+  methods: [DELETE]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_docgen.case_docx:
+  path: '/api/admin/applications/{application}/docgen/documents/{document}/docx'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCaseController::docx'
+  requirements:
+    document: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_docgen.case_docx_upload:
+  path: '/api/admin/applications/{application}/docgen/documents/{document}/docx'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCaseController::docx'
+    _format: json
+  requirements:
+    document: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _user_is_logged_in: 'TRUE'
+  methods: [POST]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_docgen.case_preview:
+  path: '/api/admin/applications/{application}/docgen/documents/{document}/preview'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCaseController::preview'
+    _format: json
+  requirements:
+    document: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _user_is_logged_in: 'TRUE'
+  methods: [POST]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_docgen.case_pdf:
+  path: '/api/admin/applications/{application}/docgen/documents/{document}/pdf'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCaseController::pdf'
+  requirements:
+    document: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_docgen.case_cover_pdf:
+  path: '/api/admin/applications/{application}/docgen/documents/{document}/cover-pdf'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCaseController::coverPdf'
+  requirements:
+    document: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _user_is_logged_in: 'TRUE'
+  methods: [GET]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_docgen.case_document_rerender:
+  path: '/api/admin/applications/{application}/docgen/documents/{document}/rerender'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCaseController::rerender'
+    _format: json
+  requirements:
+    document: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _user_is_logged_in: 'TRUE'
+  methods: [POST]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_docgen.case_viewed:
+  path: '/api/admin/applications/{application}/docgen/documents/{document}/viewed'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCaseController::viewed'
+    _format: json
+  requirements:
+    document: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+    _user_is_logged_in: 'TRUE'
+  methods: [POST]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application
+
+beantragt_docgen.case_release:
+  path: '/api/admin/applications/{application}/docgen/release'
+  defaults:
+    _controller: '\Drupal\beantragt_docgen\Controller\DocgenCaseController::release'
+    _format: json
+  requirements:
+    _user_is_logged_in: 'TRUE'
+  methods: [POST]
+  options:
+    no_cache: 'TRUE'
+    parameters:
+      application:
+        type: entity:application

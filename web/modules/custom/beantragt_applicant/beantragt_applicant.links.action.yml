@@ -1,0 +1,5 @@
+entity.applicant.add_form:
+  route_name: entity.applicant.add_form
+  title: 'Add Applicant'
+  appears_on:
+    - entity.applicant.collection

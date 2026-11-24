@@ -1,0 +1,28 @@
+# Used with compose.yaml to build the matching backend and UI sources.
+services:
+  drupal:
+    image: "${COMPOSE_PROJECT_NAME}-drupal:local"
+    pull_policy: build
+    build:
+      context: ../..
+  nginx:
+    image: "${COMPOSE_PROJECT_NAME}-nginx:local"
+    pull_policy: build
+    build:
+      context: ../..
+      dockerfile: Dockerfile.nginx
+      args:
+        DRUPAL_IMAGE: local-drupal
+      additional_contexts:
+        local-drupal: service:drupal
+  ui:
+    image: "${COMPOSE_PROJECT_NAME}-ui:local"
+    pull_policy: build
+    build:
+      # The derived UI Dockerfile sets NUXT_BUILD_SCOPE=casework.
+      context: "${UI_SOURCE_DIR:-../../../ui}"
+  docgen:
+    image: "${COMPOSE_PROJECT_NAME}-docgen:local"
+    pull_policy: build
+    build:
+      context: ../../services/docgen

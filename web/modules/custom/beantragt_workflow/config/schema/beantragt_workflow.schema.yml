@@ -1,0 +1,19 @@
+beantragt_workflow.settings:
+  type: config_object
+  label: 'Beantragt Workflow settings'
+  mapping:
+    escalation_days:
+      type: integer
+      label: 'Days before escalation'
+    resubmission_days:
+      type: integer
+      label: 'Days before resubmission reminder'
+    resubmission_scope:
+      type: string
+      label: 'Default resubmission reminder scope'
+    resubmission_interval_days:
+      type: integer
+      label: 'Days between resubmission reminders'
+    resubmission_max_reminders:
+      type: integer
+      label: 'Maximum resubmission reminders'

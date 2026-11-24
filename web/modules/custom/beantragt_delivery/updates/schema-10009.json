@@ -1,0 +1,67 @@
+{
+    "transfer_plan": {
+        "description": "Durable eligibility recorded at the confirmed submission trigger.",
+        "fields": {
+            "application_id": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "application_uuid": {
+                "type": "varchar_ascii",
+                "length": 128,
+                "not null": true
+            },
+            "assignment_uuid": {
+                "type": "varchar_ascii",
+                "length": 128,
+                "not null": false
+            },
+            "scope_group_id": {
+                "type": "int",
+                "unsigned": true,
+                "not null": false
+            },
+            "binding_checksum": {
+                "type": "varchar_ascii",
+                "length": 64,
+                "not null": false
+            },
+            "source_sha256": {
+                "type": "varchar_ascii",
+                "length": 64,
+                "not null": false
+            },
+            "status": {
+                "type": "varchar_ascii",
+                "length": 16,
+                "not null": true
+            },
+            "code": {
+                "type": "varchar_ascii",
+                "length": 128,
+                "not null": true,
+                "default": ""
+            },
+            "created": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "changed": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            }
+        },
+        "primary key": [
+            "application_id"
+        ],
+        "indexes": {
+            "pending": [
+                "status",
+                "changed"
+            ]
+        }
+    }
+}

@@ -1,0 +1,509 @@
+<?php
+
+/**
+ * @file
+ * Install, update, and uninstall functions for beantragt_schema.
+ */
+
+declare(strict_types=1);
+
+use Drupal\beantragt_schema\Entity\FormSchema;
+use Drupal\beantragt_schema\FormCompilerOrigin;
+use Drupal\beantragt_schema\Repository\FormSetupLog;
+use Drupal\Core\Database\Database;
+use Drupal\Core\Field\BaseFieldDefinition;
+
+/**
+ * Implements hook_schema().
+ */
+function beantragt_schema_schema(): array {
+  return [
+    FormSetupLog::TABLE => FormSetupLog::schema(),
+  ];
+}
+
+/**
+ * Implements hook_install().
+ */
+function beantragt_schema_install(): void {
+  $config = \Drupal::configFactory()->getEditable('jsonapi.settings');
+  if ($config->get('read_only') !== FALSE) {
+    $config->set('read_only', FALSE)->save(TRUE);
+    \Drupal::logger('beantragt_schema')->notice(
+      'Enabled JSON:API write operations for beantragt.ai schema persistence.'
+    );
+  }
+
+  _beantragt_schema_wire_form_schema_widget();
+}
+
+/**
+ * Ensures the contrib JSON Form widget module is enabled on existing installs.
+ */
+function _beantragt_schema_ensure_json_form_widget_installed(): void {
+  if (\Drupal::moduleHandler()->moduleExists('json_form_widget')) {
+    return;
+  }
+
+  $installed = \Drupal::service('module_installer')
+    ->install(['json_form_widget'], TRUE);
+  if (!$installed) {
+    throw new \RuntimeException('Could not install json_form_widget.');
+  }
+}
+
+/**
+ * Wires the structured JSON Form widget for form_schema.field_schema.
+ *
+ * Re-runnable: only touches the single component for field_schema. BaseField
+ * display defaults from baseFieldDefinitions() are left alone.
+ */
+function _beantragt_schema_wire_form_schema_widget(): void {
+  $display = \Drupal::entityTypeManager()
+    ->getStorage('entity_form_display')
+    ->load('form_schema.form_schema.default');
+
+  if (!$display) {
+    // No display has been auto-created yet (no edit-form was ever rendered).
+    // Create a minimal one; Drupal will lazy-fill BaseField components when
+    // the form is first rendered.
+    $display = \Drupal::entityTypeManager()
+      ->getStorage('entity_form_display')
+      ->create([
+        'id' => 'form_schema.form_schema.default',
+        'targetEntityType' => 'form_schema',
+        'bundle' => 'form_schema',
+        'mode' => 'default',
+        'status' => TRUE,
+      ]);
+  }
+
+  $display->setComponent('field_schema', [
+    'type' => 'form_schema_json_form',
+    'weight' => 30,
+    'region' => 'content',
+    'settings' => [],
+    'third_party_settings' => [],
+  ])->save();
+}
+
+/**
+ * Migrate field_schema and field_description from text_long to string_long.
+ */
+function beantragt_schema_update_10001(): string {
+  $database = Database::getConnection();
+  $entity_definition_update_manager = \Drupal::entityDefinitionUpdateManager();
+  $schema = $database->schema();
+
+  // Determine current column names for reading data.
+  // After text_long: field_schema__value + field_schema__format.
+  // After string_long: field_schema (single column, no __value suffix).
+  $schema_col = $schema->fieldExists('form_schema', 'field_schema__value') ? 'field_schema__value' : 'field_schema';
+  $desc_col = $schema->fieldExists('form_schema', 'field_description__value') ? 'field_description__value' : 'field_description';
+
+  // Step 1: Read existing data.
+  $schema_data = $database->query("SELECT id, {$schema_col} FROM {form_schema}")->fetchAllKeyed();
+  $description_data = $database->query("SELECT id, {$desc_col} FROM {form_schema}")->fetchAllKeyed();
+
+  // Step 2: Uninstall old field storage definitions (if they still exist).
+  $old_schema_field = $entity_definition_update_manager->getFieldStorageDefinition('field_schema', 'form_schema');
+  if ($old_schema_field) {
+    $entity_definition_update_manager->uninstallFieldStorageDefinition($old_schema_field);
+  }
+  $old_description_field = $entity_definition_update_manager->getFieldStorageDefinition('field_description', 'form_schema');
+  if ($old_description_field) {
+    $entity_definition_update_manager->uninstallFieldStorageDefinition($old_description_field);
+  }
+
+  // Step 3: Install new field storage definitions as string_long.
+  $new_schema_field = BaseFieldDefinition::create('string_long')
+    ->setName('field_schema')
+    ->setLabel(t('Form Schema'))
+    ->setDescription(t('JSON schema defining sections, fields, types, and validation rules.'))
+    ->setRequired(TRUE)
+    ->setTargetEntityTypeId('form_schema');
+  $entity_definition_update_manager->installFieldStorageDefinition(
+    'field_schema',
+    'form_schema',
+    'beantragt_schema',
+    $new_schema_field,
+  );
+
+  $new_description_field = BaseFieldDefinition::create('string_long')
+    ->setName('field_description')
+    ->setLabel(t('Description'))
+    ->setDescription(t('A description of the form.'))
+    ->setTargetEntityTypeId('form_schema');
+  $entity_definition_update_manager->installFieldStorageDefinition(
+    'field_description',
+    'form_schema',
+    'beantragt_schema',
+    $new_description_field,
+  );
+
+  // Step 4: Determine the actual column name after install (string_long uses
+  // a single 'value' property, stored as field_name without __value suffix on
+  // base tables).
+  $restore_schema_col = $schema->fieldExists('form_schema', 'field_schema__value') ? 'field_schema__value' : 'field_schema';
+  $restore_desc_col = $schema->fieldExists('form_schema', 'field_description__value') ? 'field_description__value' : 'field_description';
+
+  // Step 5: Restore data.
+  foreach ($schema_data as $id => $value) {
+    if ($value !== NULL) {
+      $database->update('form_schema')
+        ->fields([$restore_schema_col => $value])
+        ->condition('id', $id)
+        ->execute();
+    }
+  }
+  foreach ($description_data as $id => $value) {
+    if ($value !== NULL) {
+      $database->update('form_schema')
+        ->fields([$restore_desc_col => $value])
+        ->condition('id', $id)
+        ->execute();
+    }
+  }
+
+  return 'Migrated field_schema and field_description from text_long to string_long.';
+}
+
+/**
+ * Rename field_status to field_workflow_status.
+ */
+function beantragt_schema_update_10002(): string {
+  $database = Database::getConnection();
+  $entity_definition_update_manager = \Drupal::entityDefinitionUpdateManager();
+
+  // Step 1: Read existing data.
+  $status_data = $database->query('SELECT id, field_status FROM {form_schema}')->fetchAllKeyed();
+
+  // Step 2: Uninstall old field storage definition.
+  $old_field = $entity_definition_update_manager->getFieldStorageDefinition('field_status', 'form_schema');
+  if ($old_field) {
+    $entity_definition_update_manager->uninstallFieldStorageDefinition($old_field);
+  }
+
+  // Step 3: Install new field storage definition with new name.
+  $new_field = BaseFieldDefinition::create('list_string')
+    ->setName('field_workflow_status')
+    ->setLabel(t('Schema Status'))
+    ->setDescription(t('The workflow status of this form schema.'))
+    ->setDefaultValue('draft')
+    ->setRequired(TRUE)
+    ->setSetting('allowed_values', [
+      'draft' => 'Draft',
+      'published' => 'Published',
+      'archived' => 'Archived',
+    ])
+    ->setTargetEntityTypeId('form_schema');
+  $entity_definition_update_manager->installFieldStorageDefinition(
+    'field_workflow_status',
+    'form_schema',
+    'beantragt_schema',
+    $new_field,
+  );
+
+  // Step 4: Restore data into new column.
+  foreach ($status_data as $id => $value) {
+    if ($value !== NULL) {
+      $database->update('form_schema')
+        ->fields(['field_workflow_status' => $value])
+        ->condition('id', $id)
+        ->execute();
+    }
+  }
+
+  return 'Renamed field_status to field_workflow_status.';
+}
+
+/**
+ * Sync the status base field storage definition with code.
+ */
+function beantragt_schema_update_10003(): string {
+  $entity_definition_update_manager = \Drupal::entityDefinitionUpdateManager();
+
+  // Re-install the status field to sync stored definition with code.
+  $status_field = $entity_definition_update_manager->getFieldStorageDefinition('status', 'form_schema');
+  if ($status_field) {
+    // Update the stored definition by reading from code and setting the name.
+    $entity_type = \Drupal::entityTypeManager()->getDefinition('form_schema');
+    $field_definitions = FormSchema::baseFieldDefinitions($entity_type);
+    $code_definition = $field_definitions['status'];
+    $code_definition->setName('status');
+    $code_definition->setTargetEntityTypeId('form_schema');
+    $entity_definition_update_manager->updateFieldStorageDefinition($code_definition);
+  }
+
+  return 'Synced status field storage definition.';
+}
+
+/**
+ * Add revision support to the form_schema entity type.
+ */
+function beantragt_schema_update_10004(array &$sandbox): void {
+  $entity_type_id = 'form_schema';
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  $entity_type = \Drupal::entityTypeManager()->getDefinition($entity_type_id);
+
+  // Use the entity field manager to get the complete set of field storage
+  // definitions, which includes both base fields and storage-provided fields
+  // like revision_default.
+  $field_storage_definitions = \Drupal::service('entity_field.manager')
+    ->getFieldStorageDefinitions($entity_type_id);
+
+  // updateFieldableEntityType handles creating the revision table,
+  // migrating existing data to have initial revisions, and updating
+  // all field storage definitions in one batch operation.
+  $update_manager->updateFieldableEntityType($entity_type, $field_storage_definitions, $sandbox);
+}
+
+/**
+ * Enable JSON:API write operations for schema persistence.
+ */
+function beantragt_schema_update_10005(): string {
+  $config = \Drupal::configFactory()->getEditable('jsonapi.settings');
+  if ($config->get('read_only') === FALSE) {
+    return 'JSON:API write operations already enabled; nothing to do.';
+  }
+  $config->set('read_only', FALSE)->save(TRUE);
+
+  return 'Enabled JSON:API write operations for beantragt.ai schema persistence.';
+}
+
+/**
+ * Adds publication scope to form schemas.
+ */
+function beantragt_schema_update_10006(): string {
+  $entity_definition_update_manager = \Drupal::entityDefinitionUpdateManager();
+  $entity_type = \Drupal::entityTypeManager()->getDefinition('form_schema');
+  $field_definitions = FormSchema::baseFieldDefinitions($entity_type);
+  $field_definition = $field_definitions['field_publication_scope'];
+  $field_definition->setName('field_publication_scope');
+  $field_definition->setTargetEntityTypeId('form_schema');
+
+  if (!$entity_definition_update_manager->getFieldStorageDefinition('field_publication_scope', 'form_schema')) {
+    $entity_definition_update_manager->installFieldStorageDefinition(
+      'field_publication_scope',
+      'form_schema',
+      'beantragt_schema',
+      $field_definition,
+    );
+  }
+  else {
+    $entity_definition_update_manager->updateFieldStorageDefinition($field_definition);
+  }
+
+  _beantragt_schema_backfill_publication_scope();
+
+  return 'Added publication scope to form schemas.';
+}
+
+/**
+ * Backfills publication scope values on existing form schema rows.
+ */
+function beantragt_schema_update_10007(): string {
+  $updated = _beantragt_schema_backfill_publication_scope();
+
+  return sprintf(
+    'Backfilled publication scope on %d form schema table rows.',
+    $updated,
+  );
+}
+
+/**
+ * Corrects legacy auto-filled publication scopes to fail closed.
+ */
+function beantragt_schema_update_10008(): string {
+  $updated = _beantragt_schema_reset_legacy_publication_scope();
+
+  return sprintf(
+    'Reset legacy publication scope on %d form schema table rows.',
+    $updated,
+  );
+}
+
+/**
+ * Sets the default publication scope on existing form schema storage rows.
+ */
+function _beantragt_schema_backfill_publication_scope(): int {
+  $database = Database::getConnection();
+  $schema = $database->schema();
+  $updated = 0;
+
+  foreach (['form_schema', 'form_schema_revision'] as $table) {
+    if (!$schema->tableExists($table) || !$schema->fieldExists($table, 'field_publication_scope')) {
+      continue;
+    }
+
+    $updated += (int) $database->update($table)
+      ->fields(['field_publication_scope' => 'intranet'])
+      ->isNull('field_publication_scope')
+      ->execute();
+  }
+
+  return $updated;
+}
+
+/**
+ * Resets values that were implicitly defaulted before internet became opt-in.
+ */
+function _beantragt_schema_reset_legacy_publication_scope(): int {
+  $database = Database::getConnection();
+  $schema = $database->schema();
+  $updated = 0;
+
+  foreach (['form_schema', 'form_schema_revision'] as $table) {
+    if (!$schema->tableExists($table) || !$schema->fieldExists($table, 'field_publication_scope')) {
+      continue;
+    }
+
+    $updated += (int) $database->update($table)
+      ->fields(['field_publication_scope' => 'intranet'])
+      ->condition('field_publication_scope', 'internet')
+      ->execute();
+  }
+
+  return $updated;
+}
+
+/**
+ * Adds an optional per-form reference number pattern override.
+ */
+function beantragt_schema_update_10009(): string {
+  $entity_definition_update_manager = \Drupal::entityDefinitionUpdateManager();
+  $entity_type = \Drupal::entityTypeManager()->getDefinition('form_schema');
+  $field_definitions = FormSchema::baseFieldDefinitions($entity_type);
+  $field_definition = $field_definitions['field_reference_pattern'];
+  $field_definition->setName('field_reference_pattern');
+  $field_definition->setTargetEntityTypeId('form_schema');
+
+  if (!$entity_definition_update_manager->getFieldStorageDefinition('field_reference_pattern', 'form_schema')) {
+    $entity_definition_update_manager->installFieldStorageDefinition(
+      'field_reference_pattern',
+      'form_schema',
+      'beantragt_schema',
+      $field_definition,
+    );
+  }
+  else {
+    $entity_definition_update_manager->updateFieldStorageDefinition($field_definition);
+  }
+
+  return 'Added per-form reference number pattern override to form schemas.';
+}
+
+/**
+ * Activates the JSON Form widget for form_schema.field_schema on old sites.
+ */
+function beantragt_schema_update_10010(): string {
+  _beantragt_schema_ensure_json_form_widget_installed();
+  _beantragt_schema_wire_form_schema_widget();
+
+  return 'Wired form_schema_json_form widget for form_schema.field_schema.';
+}
+
+/**
+ * Creates the guided form setup log table when it is missing.
+ */
+function beantragt_schema_update_10011(): string {
+  $schema = Database::getConnection()->schema();
+  if ($schema->tableExists(FormSetupLog::TABLE)) {
+    return 'Form setup log table already exists.';
+  }
+  $schema->createTable(FormSetupLog::TABLE, FormSetupLog::schema());
+  return 'Created the form setup log table.';
+}
+
+/**
+ * Adds and backfills the read-only AI review status.
+ */
+function beantragt_schema_update_10012(array &$sandbox): string {
+  $database = Database::getConnection();
+  if (!isset($sandbox['last_id'])) {
+    $manager = \Drupal::entityDefinitionUpdateManager();
+    if (!$manager->getFieldStorageDefinition('field_ai_review_pending', 'form_schema')) {
+      $field = BaseFieldDefinition::create('boolean')
+        ->setLabel('AI review pending')
+        ->setDefaultValue(FALSE)
+        ->setReadOnly(TRUE);
+      $manager->installFieldStorageDefinition('field_ai_review_pending', 'form_schema', 'beantragt_schema', $field);
+    }
+    $sandbox['last_id'] = 0;
+    $sandbox['max_id'] = (int) $database->select('form_schema', 'f')
+      ->fields('f', ['id'])
+      ->orderBy('id', 'DESC')
+      ->range(0, 1)
+      ->execute()
+      ->fetchField();
+  }
+
+  $ids = $database->select('form_schema', 'f')
+    ->fields('f', ['id'])
+    ->condition('id', $sandbox['last_id'], '>')
+    ->condition('id', $sandbox['max_id'], '<=')
+    ->orderBy('id')
+    ->range(0, 100)
+    ->execute()
+    ->fetchCol();
+  if ($ids === []) {
+    $sandbox['#finished'] = 1;
+    return 'Added AI review status to form schemas.';
+  }
+
+  $first = $database->select('form_schema_revision', 'r');
+  $first->addExpression('MIN(r.revision_id)', 'first_revision');
+  $first->condition('id', $ids, 'IN')->groupBy('id');
+  $initial_revisions = $database->select('form_schema_revision', 'r')
+    ->fields('r', ['id', 'field_schema', 'field_source_filename'])
+    ->condition('revision_id', $first, 'IN')
+    ->execute();
+  $published = $database->select('form_schema_revision', 'r')
+    ->distinct()
+    ->fields('r', ['id'])
+    ->condition('id', $ids, 'IN')
+    ->condition('field_workflow_status', 'published')
+    ->condition('status', 1)
+    ->execute()
+    ->fetchCol();
+
+  $pending = [];
+  foreach ($initial_revisions as $revision) {
+    if (!in_array($revision->id, $published, TRUE)
+      && FormCompilerOrigin::matches(json_decode((string) $revision->field_schema, TRUE), $revision->field_source_filename)) {
+      $pending[] = $revision->id;
+    }
+  }
+
+  foreach ([1 => $pending, 0 => array_diff($ids, $pending)] as $value => $form_ids) {
+    if ($form_ids !== []) {
+      $database->update('form_schema')
+        ->fields(['field_ai_review_pending' => $value])
+        ->condition('id', $form_ids, 'IN')
+        ->execute();
+    }
+  }
+  $sandbox['last_id'] = (int) end($ids);
+  $sandbox['#finished'] = $sandbox['last_id'] / $sandbox['max_id'];
+  return 'Added AI review status to form schemas.';
+}
+
+/**
+ * Implements hook_uninstall().
+ *
+ * Resets jsonapi.settings.read_only to TRUE when the beantragt_schema module
+ * is uninstalled, because this module is the sole reason write mode was
+ * enabled (see beantragt_schema_update_10005). The reset is idempotent: if the
+ * value is already TRUE we skip the write.
+ */
+function beantragt_schema_uninstall(): void {
+  $config = \Drupal::configFactory()->getEditable('jsonapi.settings');
+  if ($config->get('read_only') === TRUE) {
+    // Already read-only; nothing to do.
+    return;
+  }
+  $config->set('read_only', TRUE)->save(TRUE);
+  \Drupal::logger('beantragt_schema')->notice(
+    'JSON:API write mode reverted to read-only on beantragt_schema uninstall.'
+  );
+}

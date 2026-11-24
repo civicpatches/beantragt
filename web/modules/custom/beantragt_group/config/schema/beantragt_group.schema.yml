@@ -1,0 +1,40 @@
+beantragt_group.settings:
+  type: config_object
+  label: 'Beantragt group settings'
+  mapping:
+    jurisdiction_group_type:
+      type: string
+      label: 'Jurisdiction group type'
+    default_jurisdiction_slug:
+      type: string
+      label: 'Default jurisdiction slug'
+    default_organisation_slug:
+      type: string
+      label: 'Default organisation slug'
+    frontend_base_url:
+      type: string
+      label: 'Frontend base URL for workspace invites'
+    workspace_invite_claim_path:
+      type: string
+      label: 'Workspace invite claim path'
+    grantable_roles:
+      type: sequence
+      label: 'Grantable group role IDs for workspace invites'
+      sequence:
+        type: string
+        label: 'Group role ID'
+
+beantragt_group.mail:
+  type: config_object
+  label: 'Beantragt group mail templates'
+  mapping:
+    workspace_invitation:
+      type: mapping
+      label: 'Workspace invitation mail'
+      mapping:
+        subject:
+          type: label
+          label: 'Subject'
+        body:
+          type: string
+          label: 'Body'

@@ -1,0 +1,338 @@
+<?php
+
+/**
+ * @file
+ * Primary module hooks for Beantragt Applicant module.
+ */
+
+declare(strict_types=1);
+
+use Drupal\beantragt_application\Entity\ApplicationInterface;
+use Drupal\beantragt_applicant\Entity\ApplicantInterface;
+use Drupal\Core\Access\AccessResult;
+use Drupal\Core\Access\AccessResultInterface;
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\EntityStorageException;
+use Drupal\Core\Field\FieldDefinitionInterface;
+use Drupal\Core\Field\FieldItemListInterface;
+use Drupal\Core\Session\AccountInterface;
+use Drupal\beantragt_roles_api\BeantragtRoles;
+use Drupal\field_encrypt\ProcessEntities;
+
+/**
+ * Implements hook_module_implements_alter().
+ */
+function beantragt_applicant_module_implements_alter(array &$implementations, string $hook): void {
+  if ($hook !== 'entity_presave' || !isset($implementations['beantragt_applicant'])) {
+    return;
+  }
+
+  // Verify Field Encrypt's actual result after all encryption hooks ran.
+  $implementation = $implementations['beantragt_applicant'];
+  unset($implementations['beantragt_applicant']);
+  $implementations['beantragt_applicant'] = $implementation;
+}
+
+/**
+ * Implements hook_entity_presave().
+ */
+function beantragt_applicant_entity_presave(EntityInterface $entity): void {
+  if (!$entity instanceof ApplicantInterface) {
+    return;
+  }
+
+  $has_protected_values = FALSE;
+  foreach (ApplicantInterface::PROTECTED_FIELDS as $field_name) {
+    $field = $entity->get($field_name);
+    if ($field->isEmpty()) {
+      continue;
+    }
+    $has_protected_values = TRUE;
+    if ($field->value !== ProcessEntities::ENCRYPTED_VALUE) {
+      throw new EntityStorageException('Applicant field encryption is unavailable. Protected applicant fields were not encrypted before storage.');
+    }
+  }
+
+  if (!$has_protected_values) {
+    return;
+  }
+
+  $encrypted_storage = $entity->get(ProcessEntities::ENCRYPTED_FIELD_STORAGE_NAME);
+  if ($encrypted_storage->isEmpty()
+    || !is_string($encrypted_storage->value)
+    || $encrypted_storage->value === ''
+    || $encrypted_storage->encryption_profile !== 'beantragt_applicant') {
+    throw new EntityStorageException('Applicant field encryption is unavailable. Protected applicant fields were not encrypted before storage.');
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_presave() for applicant.
+ */
+function beantragt_applicant_applicant_presave(ApplicantInterface $applicant): void {
+  /** @var \Drupal\beantragt_application\Service\ApplicantScopeMutationLock $scope_lock */
+  $scope_lock = \Drupal::service('beantragt_application.applicant_scope_mutation_lock');
+  if (!$scope_lock->hasTenantScopeForApplicant($applicant)) {
+    throw new EntityStorageException('The applicant cannot be saved without a jurisdiction scope.');
+  }
+  $has_email = $applicant->hasField('field_email')
+    && !$applicant->get('field_email')->isEmpty();
+  if ($has_email && !$scope_lock->hasLockableIdentityForApplicant($applicant)) {
+    throw new EntityStorageException('The applicant scope lock cannot be derived from the email address.');
+  }
+  if (!$scope_lock->acquireForApplicant($applicant)) {
+    throw new EntityStorageException('The applicant scope lock is unavailable because another mutation is in progress.');
+  }
+  // SqlContentEntityStorage starts its transaction before presave hooks.
+  $scope_lock->release($applicant);
+
+}
+
+/**
+ * Implements hook_entity_field_access().
+ */
+function beantragt_applicant_entity_field_access(
+  string $operation,
+  FieldDefinitionInterface $field_definition,
+  AccountInterface $account,
+  ?FieldItemListInterface $items = NULL,
+): AccessResultInterface {
+  if ($field_definition->getTargetEntityTypeId() !== 'applicant') {
+    return AccessResult::neutral();
+  }
+  $field_name = $field_definition->getName();
+  if ($field_name === ApplicantInterface::CONSENT_PROOF_FIELD) {
+    return AccessResult::forbidden('Per-field consent proof is maintained by the profile sync and withdrawal services.');
+  }
+  if (!in_array($field_name, ApplicantInterface::PROTECTED_FIELDS, TRUE)) {
+    return AccessResult::neutral();
+  }
+
+  $platform_admin = $account->hasPermission('administer applicant entities')
+    || $account->hasPermission('bypass beantragt group scope');
+
+  if (in_array($operation, ['edit', 'update', 'create'], TRUE)) {
+    return $platform_admin
+      ? AccessResult::allowed()->cachePerPermissions()
+      : AccessResult::forbidden('Protected applicant fields are editable only by platform administrators.')
+        ->cachePerPermissions();
+  }
+
+  if ($operation === 'view') {
+    $allowed = $platform_admin
+      || $account->hasPermission('view protected application data');
+    return $allowed
+      ? AccessResult::allowed()->cachePerPermissions()->cachePerUser()->setCacheMaxAge(0)
+      : AccessResult::forbidden('Protected applicant fields require explicit access.')
+        ->cachePerPermissions();
+  }
+
+  return AccessResult::neutral();
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_predelete() for applicant.
+ */
+function beantragt_applicant_applicant_predelete(ApplicantInterface $applicant): void {
+  /** @var \Drupal\beantragt_application\Service\ApplicantScopeMutationLock $scope_lock */
+  $scope_lock = \Drupal::service('beantragt_application.applicant_scope_mutation_lock');
+  if (!$scope_lock->acquireForApplicant($applicant)) {
+    throw new EntityStorageException('The applicant scope lock is unavailable because another mutation is in progress.');
+  }
+  // SqlContentEntityStorage starts its transaction before predelete hooks.
+  $scope_lock->release($applicant);
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_insert() for application.
+ *
+ * Automatically creates or updates an applicant whenever a new
+ * application with CRM data is saved.
+ */
+function beantragt_applicant_application_insert(ApplicationInterface $application): void {
+  if (!$application->isEmailConfirmed()) {
+    return;
+  }
+
+  try {
+    _beantragt_applicant_sync_from_application($application);
+  }
+  catch (\Throwable $exception) {
+    // Applicant CRM is a secondary effect and must not abort submission.
+    \Drupal::logger('beantragt_applicant')->error('Applicant CRM sync failed after application insert @id; application persistence continues. Exception: @exception.', [
+      '@id' => $application->id(),
+      '@exception' => $exception::class,
+    ]);
+  }
+}
+
+/**
+ * Implements hook_beantragt_application_confirmed().
+ */
+function beantragt_applicant_beantragt_application_confirmed(ApplicationInterface $application): void {
+  _beantragt_applicant_sync_from_application($application);
+}
+
+/**
+ * Synchronizes applicant profile data from a confirmed application.
+ *
+ * Two gates guard the profile path: the citizen's consent stored on the
+ * application with a complete proof record, and the jurisdiction switch,
+ * read again on every call so a jurisdiction that switched the function off
+ * stops syncing older consents. Bank details additionally need the bank
+ * switch of the jurisdiction and a proven bank consent. A third gate sits in
+ * ApplicantManager, where the matched profile
+ * is known: a consent given at or before a withdrawal stored on that profile
+ * writes nothing for its kind, so an application submitted with consent
+ * before "Meine Daten" withdrew it and confirmed afterwards does not refill
+ * the profile. Only a consent given after the withdrawal counts again.
+ */
+function _beantragt_applicant_sync_from_application(ApplicationInterface $application): void {
+  if (!$application->isEmailConfirmed()) {
+    return;
+  }
+  $contact_record = $application->getProfileConsentRecord();
+  $contact_provenance = $application->hasProfileConsent()
+    ? _beantragt_applicant_consent_provenance($application, $contact_record)
+    : NULL;
+  if ($contact_provenance === NULL) {
+    return;
+  }
+  /** @var \Drupal\beantragt_application\Service\ApplicantProfileSwitch $profile_switch */
+  $profile_switch = \Drupal::service('beantragt_application.applicant_profile_switch');
+  if (!$profile_switch->isEnabledForApplication($application)) {
+    return;
+  }
+
+  // The bank switch is read again as well: a jurisdiction that stopped
+  // offering the bank checkbox no longer syncs bank details.
+  $bank_provenance = $application->hasBankConsent() && $profile_switch->isBankEnabledForApplication($application)
+    ? _beantragt_applicant_consent_provenance($application, $application->getBankConsentRecord())
+    : NULL;
+  $crm_data = $application->getApplicantCrmData($bank_provenance !== NULL);
+  $bank_keys = array_flip(ApplicationInterface::BANK_CONSENT_CRM_KEYS);
+  $contact_data = array_diff_key($crm_data, $bank_keys);
+  $bank_data = $bank_provenance === NULL ? [] : array_intersect_key($crm_data, $bank_keys);
+  $scoped = isset($contact_provenance['fields']);
+  if ($scoped) {
+    $contact_data = array_intersect_key($contact_data, array_flip($contact_provenance['fields']));
+    $bank_data = array_intersect_key($bank_data, array_flip($bank_provenance['fields'] ?? []));
+  }
+  $crm_data = $contact_data + $bank_data;
+  if ($crm_data === []) {
+    return;
+  }
+
+  // Determine the uid from the application owner.
+  $uid = (int) $application->getOwnerId();
+  $uid = $uid > 0 ? $uid : NULL;
+
+  // Session token: not available from application entity directly.
+  // The frontend should pass it as part of the application data or via a
+  // dedicated field. Without it, matching uses email and user ID.
+  $session_token = NULL;
+  $owner = $application->getOwner();
+  $crm_email = isset($crm_data['person.email']) && is_string($crm_data['person.email'])
+    ? mb_strtolower(trim($crm_data['person.email']))
+    : '';
+  $owner_email = \Drupal::hasService('beantragt_passwordless.verified_mail')
+    ? (\Drupal::service('beantragt_passwordless.verified_mail')->getVerifiedEmail($owner) ?? '')
+    : '';
+  $email_verified = $uid !== NULL
+    && $crm_email !== ''
+    && $owner_email !== ''
+    && hash_equals($owner_email, $crm_email)
+    && !BeantragtRoles::isServiceAccount($owner);
+  // A signed-in account may submit with an address that is not its own, and
+  // only anonymous submissions prove the address by a confirmation link. A
+  // profile under such an unproven foreign address could later be taken
+  // over by the real mailbox owner (claimUnclaimedByVerifiedEmail()), with
+  // consents that person never gave. So nothing is synced in that case.
+  // Anonymous applications (service account owner, confirmed by link) and
+  // forms without an email field (matched by uid) are not affected.
+  $owner_is_citizen = $uid !== NULL && !BeantragtRoles::isServiceAccount($owner);
+  $submitted_email = $scoped ? mb_strtolower(trim((string) $application->getApplicantEmail())) : $crm_email;
+  if ($scoped && (($crm_email !== '' && $crm_email !== $submitted_email) || (!$owner_is_citizen && $crm_email === ''))) {
+    return;
+  }
+  if ($owner_is_citizen && $submitted_email !== '' && !hash_equals($owner_email, $submitted_email)) {
+    \Drupal::logger('beantragt_applicant')->notice('Skipped profile sync for application @id: the submitted address is not the address of the signed-in account.', [
+      '@id' => $application->id(),
+    ]);
+    return;
+  }
+  $scope = [];
+  foreach (['field_jurisdiction', 'field_organisation', 'field_group'] as $field_name) {
+    if (!$application->hasField($field_name) || $application->get($field_name)->isEmpty()) {
+      continue;
+    }
+    $target_id = (int) ($application->get($field_name)->target_id ?? 0);
+    if ($target_id > 0) {
+      $scope[$field_name] = ['target_id' => $target_id];
+    }
+  }
+
+  /** @var \Drupal\beantragt_applicant\Service\ApplicantManager $profile_manager */
+  $profile_manager = \Drupal::service('beantragt_applicant.manager');
+
+  if ($scoped) {
+    $submitted_scope = $contact_record['profileScope'] ?? NULL;
+    foreach (['field_jurisdiction', 'field_organisation', 'field_group'] as $field_name) {
+      if (($submitted_scope[$field_name] ?? NULL) !== ($scope[$field_name]['target_id'] ?? 0)) {
+        \Drupal::logger('beantragt_applicant')->notice('Skipped applicant profile sync because the application scope no longer matches the consent scope.');
+        return;
+      }
+    }
+  }
+  $consent = ['contact' => $contact_provenance];
+  if ($bank_provenance !== NULL) {
+    $consent['bank'] = $bank_provenance;
+  }
+
+  $profile_manager->findOrCreate($crm_data, $uid, $session_token, $email_verified, $scope, $consent);
+}
+
+/**
+ * Builds applicant consent provenance from an application consent record.
+ *
+ * A consent counts only with a complete proof: a positive time, a text
+ * version and the hash of the rendered text.
+ *
+ * @return array{time: int, textVersion: string, source: string, textHash: string, locale: ?string, scopeLabel: ?string, text?: string, fields?: list<string>}|null
+ *   Provenance for ApplicantManager::findOrCreate(), or NULL when the record
+ *   does not prove the consent. The rendered text and, for scoped consent,
+ *   the field list are kept with the proof independently of the application.
+ */
+function _beantragt_applicant_consent_provenance(ApplicationInterface $application, array $record): ?array {
+  $time = $record['time'] ?? NULL;
+  $version = $record['textVersion'] ?? NULL;
+  $hash = $record['textHash'] ?? NULL;
+  $locale = $record['locale'] ?? NULL;
+  $scope_label = is_array($record['scope'] ?? NULL) ? ($record['scope']['label'] ?? NULL) : NULL;
+  $source = (string) $application->uuid();
+  if (!is_int($time) || $time <= 0
+    || !is_string($version) || $version === ''
+    || !is_string($hash) || $hash === ''
+    || $source === '') {
+    return NULL;
+  }
+  $snapshot = [];
+  if (array_key_exists('fields', $record)) {
+    if (!is_array($record['fields']) || !array_is_list($record['fields']) || $record['fields'] === []
+      || array_filter($record['fields'], 'is_string') !== $record['fields']) {
+      return NULL;
+    }
+    $snapshot['fields'] = $record['fields'];
+  }
+  if (is_string($record['text'] ?? NULL) && $record['text'] !== '') {
+    $snapshot['text'] = $record['text'];
+  }
+  return [
+    'time' => $time,
+    'textVersion' => $version,
+    'source' => $source,
+    'textHash' => $hash,
+    'locale' => is_string($locale) && $locale !== '' ? $locale : NULL,
+    'scopeLabel' => is_string($scope_label) && $scope_label !== '' ? $scope_label : NULL,
+  ] + $snapshot;
+}

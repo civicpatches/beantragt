@@ -1,0 +1,78 @@
+<?php
+
+/**
+ * @file
+ * Install functions for beantragt_form_schema_group.
+ */
+
+declare(strict_types=1);
+
+use Drupal\user\Entity\Role;
+
+/**
+ * Implements hook_install().
+ */
+function beantragt_form_schema_group_install(): void {
+  _beantragt_form_schema_group_grant_role_permissions();
+}
+
+/**
+ * Grants permissions to roles that may manage form schema groups.
+ */
+function _beantragt_form_schema_group_grant_role_permissions(): bool {
+  $changed = FALSE;
+  $available_permissions = array_keys(\Drupal::service('user.permissions')->getPermissions());
+
+  $role_permissions = [
+    'case_worker' => [
+      'view published form_schema_group entities',
+    ],
+    'department_admin' => [
+      'administer form_schema_group entities',
+      'view published form_schema_group entities',
+      'view unpublished form_schema_group entities',
+      'create form_schema_group entities',
+      'edit own form_schema_group entities',
+      'edit any form_schema_group entities',
+      'delete own form_schema_group entities',
+      'delete any form_schema_group entities',
+    ],
+    'service_account' => [
+      'create form_schema_group entities',
+      'view published form_schema_group entities',
+      'view unpublished form_schema_group entities',
+    ],
+  ];
+
+  foreach ($role_permissions as $role_id => $permissions) {
+    $role = Role::load($role_id);
+    if (!$role) {
+      continue;
+    }
+
+    $role_changed = FALSE;
+    foreach (array_intersect($permissions, $available_permissions) as $permission) {
+      if (!$role->hasPermission($permission)) {
+        $role->grantPermission($permission);
+        $role_changed = TRUE;
+        $changed = TRUE;
+      }
+    }
+
+    if ($role_changed) {
+      $role->save();
+    }
+  }
+
+  return $changed;
+}
+
+/**
+ * Grants the Nuxt service account form schema group creation permission.
+ */
+function beantragt_form_schema_group_update_10001(): string {
+  $changed = _beantragt_form_schema_group_grant_role_permissions();
+  return $changed
+    ? 'Updated form schema group role permissions.'
+    : 'Form schema group role permissions were already up to date.';
+}

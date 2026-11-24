@@ -1,0 +1,5 @@
+entity.form_schema_group.add_form:
+  route_name: entity.form_schema_group.add_form
+  title: 'Add Form Schema Group'
+  appears_on:
+    - entity.form_schema_group.collection

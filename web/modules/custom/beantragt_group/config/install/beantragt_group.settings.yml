@@ -1,0 +1,8 @@
+jurisdiction_group_type: jur
+default_jurisdiction_slug: ''
+default_organisation_slug: citizen-services
+frontend_base_url: ''
+workspace_invite_claim_path: /workspace/invite
+grantable_roles:
+  - jur-member
+  - org-member

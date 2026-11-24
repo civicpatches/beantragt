@@ -1,0 +1,9 @@
+{
+    "external_response_fields": {
+        "outcome_label": {
+            "type": "varchar",
+            "length": 64,
+            "not null": false
+        }
+    }
+}

@@ -1,0 +1,4 @@
+administer workflow_status entities:
+  title: 'Administer workflow status entities'
+  description: 'Allows creating, editing, and deleting workflow status definitions.'
+  restrict access: true

@@ -1,0 +1,13 @@
+workspace_invitation:
+  subject: '@site_name: Invitation for @target_parent'
+  body: |
+    Hello,
+
+    You have been invited to set up a workspace under "@target_parent" on @site_name.
+
+    Open the following link to continue:
+    @claim_url
+
+    This invitation is valid for @expires_in days.
+
+    If you did not expect this invitation, you can ignore this email.

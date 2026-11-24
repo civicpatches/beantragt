@@ -1,0 +1,61 @@
+services:
+  logger.channel.beantragt_sso:
+    parent: logger.channel_base
+    arguments: ['beantragt_sso']
+
+  beantragt_sso.provider_manager:
+    class: Drupal\beantragt_sso\Service\SsoProviderManager
+    arguments:
+      - '@config.factory'
+
+  beantragt_sso.client_factory:
+    class: Drupal\beantragt_sso\Service\SsoClientFactory
+    arguments:
+      - '@beantragt_sso.provider_manager'
+      - '@request_stack'
+
+  beantragt_sso.relay_state:
+    class: Drupal\beantragt_sso\Service\SsoRelayStateValidator
+    arguments:
+      - '@config.factory'
+      - '@request_stack'
+      - '@logger.channel.beantragt_sso'
+
+  beantragt_sso.replay_cache:
+    class: Drupal\beantragt_sso\Service\SsoReplayCache
+    arguments:
+      - '@database'
+      - '@datetime.time'
+
+  beantragt_sso.identity_linker:
+    class: Drupal\beantragt_sso\Service\SsoIdentityLinker
+    arguments:
+      - '@database'
+      - '@entity_type.manager'
+      - '@beantragt_applicant.manager'
+      - '@logger.channel.beantragt_sso'
+      - '@datetime.time'
+      - '@beantragt_passwordless.verified_mail'
+      - '@lock'
+
+  beantragt_sso.login_service:
+    class: Drupal\beantragt_sso\Service\SsoLoginService
+    arguments:
+      - '@beantragt_sso.provider_manager'
+      - '@beantragt_sso.client_factory'
+      - '@beantragt_sso.replay_cache'
+      - '@beantragt_sso.identity_linker'
+      - '@logger.channel.beantragt_sso'
+
+  beantragt_sso.failure_log:
+    class: Drupal\beantragt_sso\Service\SsoFailureLog
+
+  beantragt_sso.login_cache_subscriber:
+    class: Drupal\beantragt_sso\EventSubscriber\SsoLoginCacheSubscriber
+    tags:
+      - { name: event_subscriber }
+
+  beantragt_sso.config_import_validator:
+    class: Drupal\beantragt_sso\EventSubscriber\SsoConfigImportValidator
+    tags:
+      - { name: event_subscriber }

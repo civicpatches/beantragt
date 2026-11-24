@@ -1,0 +1,38 @@
+administer applicant entities:
+  title: 'Administer Applicant entities'
+  description: 'Full administrative access to Applicant entities.'
+  restrict access: true
+
+administer scoped applicant cleanup:
+  title: 'Permanently delete scoped applicant data'
+  description: 'Delete an applicant profile and its applications through the tenant-scoped cleanup API.'
+  restrict access: true
+
+view published applicant entities:
+  title: 'View published Applicant entities'
+
+view unpublished applicant entities:
+  title: 'View unpublished Applicant entities'
+
+view own applicant entities:
+  title: 'View own Applicant entities'
+  description: 'Allows users to view their own applicant.'
+
+create applicant entities:
+  title: 'Create Applicant entities'
+
+edit own applicant entities:
+  title: 'Edit own Applicant entities'
+
+edit any applicant entities:
+  title: 'Edit any Applicant entities'
+
+delete own applicant entities:
+  title: 'Delete own Applicant entities'
+
+manage own applicant profile:
+  title: 'Manage own applicant profile'
+  description: "View and update allowlisted fields on the current user's own applicant profile through the self-service API."
+
+delete any applicant entities:
+  title: 'Delete any Applicant entities'

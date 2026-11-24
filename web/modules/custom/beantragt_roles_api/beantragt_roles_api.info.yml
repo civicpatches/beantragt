@@ -1,0 +1,5 @@
+name: 'Beantragt Roles API'
+type: module
+description: 'Neutral role-detection contract (service account, staff) shared by modules below beantragt_roles in the dependency graph, so they can use it without a dependency cycle.'
+core_version_requirement: ^11
+package: Beantragt

@@ -1,0 +1,12 @@
+name: 'Beantragt Applicant'
+type: module
+description: 'Provides applicant entities for storing recurring personal data across applications.'
+core_version_requirement: ^11
+package: Beantragt
+dependencies:
+  - beantragt_application:beantragt_application
+  - beantragt_roles_api:beantragt_roles_api
+  - encrypt:encrypt
+  - field_encrypt:field_encrypt
+  - key:key
+  - real_aes:real_aes

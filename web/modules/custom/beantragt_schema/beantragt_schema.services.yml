@@ -1,0 +1,35 @@
+services:
+  logger.channel.beantragt_schema:
+    parent: logger.channel_base
+    arguments: ['beantragt_schema']
+
+  beantragt_schema.workspace_scope:
+    class: Drupal\beantragt_schema\Service\FormSchemaWorkspaceScope
+    arguments: ['@entity_type.manager', '@?beantragt_group.jurisdiction_hierarchy_resolver']
+
+  beantragt_schema.jsonapi_route_subscriber:
+    class: Drupal\beantragt_schema\Routing\JsonApiRouteSubscriber
+    tags:
+      - { name: event_subscriber }
+
+  beantragt_schema.jsonapi_create_subscriber:
+    class: Drupal\beantragt_schema\EventSubscriber\WorkspaceCreateSubscriber
+    arguments: ['@entity_type.manager', '@beantragt_schema.workspace_scope', '@current_user']
+    tags:
+      - { name: event_subscriber }
+
+  # Collection, related, relationship and existing-entity upload routes
+  # of JSON:API answer only staff, the service account and administrators.
+  beantragt_schema.jsonapi_read_gate:
+    class: Drupal\beantragt_schema\Access\JsonApiReadGateAccessCheck
+    tags:
+      - { name: access_check, applies_to: _beantragt_jsonapi_read_gate }
+
+  # Guided form setup: append-only log and the state Drupal decides.
+  beantragt_schema.form_setup_log:
+    class: Drupal\beantragt_schema\Repository\FormSetupLog
+    arguments: ['@database', '@datetime.time']
+
+  beantragt_schema.form_setup_state:
+    class: Drupal\beantragt_schema\Service\FormSetupState
+    arguments: ['@entity_type.manager']

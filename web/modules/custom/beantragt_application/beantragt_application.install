@@ -1,0 +1,1362 @@
+<?php
+
+/**
+ * @file
+ * Install and uninstall functions for beantragt_application.
+ */
+
+declare(strict_types=1);
+
+use Drupal\beantragt_schema\Entity\FormSchemaInterface;
+use Drupal\beantragt_application\Entity\ApplicationInterface;
+use Drupal\beantragt_application\Entity\ApplicationAttachment;
+use Drupal\beantragt_application\Entity\Application;
+use Drupal\beantragt_application\Exception\UnresolvableApplicationSchemaException;
+use Drupal\beantragt_application\Service\ApplicationDataProtectionService;
+use Drupal\beantragt_application\Service\ProtectedAccessLog;
+use Drupal\beantragt_application\Service\ApplicationMessageReadState;
+use Drupal\beantragt_application\Service\ApplicationEventReadState;
+use Drupal\Core\Entity\RevisionableStorageInterface;
+use Drupal\Core\Field\BaseFieldDefinition;
+use Drupal\Core\Field\FieldStorageDefinitionInterface;
+use Drupal\Core\Utility\UpdateException;
+use Drupal\user\RoleInterface;
+
+/**
+ * Implements hook_requirements().
+ */
+function beantragt_application_requirements(string $phase): array {
+  if ($phase !== 'runtime') {
+    return [];
+  }
+  $pending = \Drupal::state()->get(ApplicationDataProtectionService::BACKFILL_PENDING_STATE_KEY, []);
+  if ($pending === []) {
+    return [];
+  }
+  return [
+    'beantragt_application_data_backfill' => [
+      'title' => t('Application data protection update'),
+      'value' => t('@count applications awaiting encryption', ['@count' => count($pending)]),
+      'description' => t('Restore the submitted form definitions, then run drush beantragt:retry-data-protection. See the beantragt_application.data_backfill_pending state entry for the application IDs.'),
+      'severity' => REQUIREMENT_WARNING,
+    ],
+  ];
+}
+
+/**
+ * Implements hook_schema().
+ *
+ * Defines the beantragt_ref_sequence table for atomic sequence counters.
+ * Each row tracks the current sequence number for a given org + scope + year
+ * combination, enabling race-condition-safe reference number generation.
+ *
+ * The scope_id dimension lets forms with a per-form reference pattern keep
+ * their own independent sequence (scope_id = form_schema id). Forms without a
+ * per-form pattern share the organisation sequence (scope_id = 0).
+ */
+function beantragt_application_schema(): array {
+  $schema[ProtectedAccessLog::TABLE] = ProtectedAccessLog::schema();
+  $schema[ApplicationMessageReadState::TABLE] = ApplicationMessageReadState::schema();
+  $schema[ApplicationEventReadState::RECEIPTS_TABLE] = ApplicationEventReadState::receiptSchema();
+  $schema['beantragt_ref_sequence'] = [
+    'description' => 'Stores per-org per-scope per-year sequence counters for reference numbers.',
+    'fields' => [
+      'org_id' => [
+        'description' => 'The group ID of the organisation (0 for global/unaffiliated).',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ],
+      'scope_id' => [
+        'description' => 'The sequence scope: form_schema id for per-form patterns, 0 for the shared org sequence.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ],
+      'year' => [
+        'description' => 'The four-digit year.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'sequence' => [
+        'description' => 'The current sequence number.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ],
+    ],
+    'primary key' => ['org_id', 'scope_id', 'year'],
+  ];
+
+  return $schema;
+}
+
+/**
+ * Adds the scope_id dimension to the reference sequence table.
+ *
+ * Enables per-form sequence counters: forms with their own reference pattern
+ * number from 1 independently (scope_id = form_schema id) while forms sharing
+ * the organisation pattern keep their existing shared sequence (scope_id = 0).
+ *
+ * Backfills every existing row to scope_id = 0 (the org-shared sequence) so the
+ * pre-existing org/year numbering continues unchanged, then rebuilds the
+ * primary key as (org_id, scope_id, year).
+ */
+function beantragt_application_update_10001(): string {
+  $schema = \Drupal::database()->schema();
+
+  if (!$schema->tableExists('beantragt_ref_sequence')) {
+    // Fresh installs already get the new shape from hook_schema().
+    return 'Reference sequence table not present; nothing to migrate.';
+  }
+
+  if ($schema->fieldExists('beantragt_ref_sequence', 'scope_id')) {
+    return 'scope_id column already present; nothing to do.';
+  }
+
+  // Drop the existing primary key before adding the column, then re-add it
+  // with the new composite definition. Existing rows backfill to scope_id = 0
+  // via the column default, preserving the current org/year sequences.
+  $schema->dropPrimaryKey('beantragt_ref_sequence');
+  $schema->addField(
+    'beantragt_ref_sequence',
+    'scope_id',
+    [
+      'description' => 'The sequence scope: form_schema id for per-form patterns, 0 for the shared org sequence.',
+      'type' => 'int',
+      'unsigned' => TRUE,
+      'not null' => TRUE,
+      'default' => 0,
+    ],
+    ['primary key' => ['org_id', 'scope_id', 'year']],
+  );
+
+  return 'Added scope_id dimension to beantragt_ref_sequence; existing rows backfilled to scope_id = 0.';
+}
+
+/**
+ * Revokes global workflow-status administration from the service account.
+ */
+function beantragt_application_update_10002(): string {
+  return _beantragt_application_revoke_service_account_permissions([
+    'administer workflow_status entities',
+  ]);
+}
+
+/**
+ * Installs workflow attributes storage for existing application entities.
+ */
+function beantragt_application_update_10003(): string {
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  if ($update_manager->getFieldStorageDefinition('field_workflow_attributes', 'application')) {
+    return 'Application workflow attributes field already installed.';
+  }
+
+  $entity_type = \Drupal::entityTypeManager()->getDefinition('application');
+  $field_definitions = Application::baseFieldDefinitions($entity_type);
+  $field_definition = $field_definitions['field_workflow_attributes'];
+  if (!$field_definition instanceof BaseFieldDefinition) {
+    throw new \RuntimeException('Application workflow attributes field definition is invalid.');
+  }
+  $field_definition->setName('field_workflow_attributes');
+  $field_definition->setTargetEntityTypeId('application');
+
+  $update_manager->installFieldStorageDefinition(
+    'field_workflow_attributes',
+    'application',
+    'beantragt_application',
+    $field_definition,
+  );
+
+  return 'Installed workflow attributes field on application entities.';
+}
+
+/**
+ * Installs public status token hash storage for existing applications.
+ */
+function beantragt_application_update_10004(): string {
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  if ($update_manager->getFieldStorageDefinition('field_public_status_token_hash', 'application')) {
+    return 'Application public status token hash field already installed.';
+  }
+
+  $entity_type = \Drupal::entityTypeManager()->getDefinition('application');
+  $field_definitions = Application::baseFieldDefinitions($entity_type);
+  $field_definition = $field_definitions['field_public_status_token_hash'];
+  if (!$field_definition instanceof BaseFieldDefinition) {
+    throw new \RuntimeException('Application public status token hash field definition is invalid.');
+  }
+  $field_definition->setName('field_public_status_token_hash');
+  $field_definition->setTargetEntityTypeId('application');
+
+  $update_manager->installFieldStorageDefinition(
+    'field_public_status_token_hash',
+    'application',
+    'beantragt_application',
+    $field_definition,
+  );
+
+  return 'Installed public status token hash field on application entities.';
+}
+
+/**
+ * Installs application attachment entity storage for public file fields.
+ */
+function beantragt_application_update_10005(): string {
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  if ($update_manager->getEntityType('application_attachment')) {
+    return 'Application attachment entity storage already installed.';
+  }
+
+  $entity_type = \Drupal::entityTypeManager()->getDefinition('application_attachment');
+  $update_manager->installEntityType($entity_type);
+
+  return 'Installed application_attachment entity storage.';
+}
+
+/**
+ * Grants service-account attachment permissions.
+ */
+function beantragt_application_update_10006(): string {
+  $role = \Drupal::entityTypeManager()->getStorage('user_role')->load('service_account');
+  if (!$role) {
+    return 'service_account role not found.';
+  }
+
+  $changed = FALSE;
+  foreach ([
+    'create application_attachment entities',
+    'view application_attachment entities',
+  ] as $permission) {
+    if (!$role->hasPermission($permission)) {
+      $role->grantPermission($permission);
+      $changed = TRUE;
+    }
+  }
+
+  if (!$changed) {
+    return 'service_account attachment permissions already present.';
+  }
+
+  $role->save();
+  return 'Granted service_account attachment permissions.';
+}
+
+/**
+ * Removes anonymous direct access to private application collections.
+ */
+function beantragt_application_update_10007(): string {
+  $role = \Drupal::entityTypeManager()->getStorage('user_role')->load('anonymous');
+  if (!$role) {
+    return 'anonymous role not found.';
+  }
+
+  $changed = FALSE;
+  foreach ([
+    'view published application entities',
+    'view unpublished application entities',
+    'view application_attachment entities',
+  ] as $permission) {
+    if ($role->hasPermission($permission)) {
+      $role->revokePermission($permission);
+      $changed = TRUE;
+    }
+  }
+
+  if (!$changed) {
+    return 'Anonymous application collection permissions already absent.';
+  }
+
+  $role->save();
+  return 'Revoked anonymous application collection permissions.';
+}
+
+/**
+ * Installs malware scan fields on application attachments.
+ */
+function beantragt_application_update_10008(): string {
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  $entity_type = \Drupal::entityTypeManager()->getDefinition('application_attachment');
+  $field_definitions = ApplicationAttachment::baseFieldDefinitions($entity_type);
+  $installed = [];
+
+  foreach (['field_scan_status', 'field_scan_message'] as $field_name) {
+    if ($update_manager->getFieldStorageDefinition($field_name, 'application_attachment')) {
+      continue;
+    }
+    $field_definition = $field_definitions[$field_name] ?? NULL;
+    if (!$field_definition instanceof BaseFieldDefinition) {
+      throw new \RuntimeException(sprintf('Application attachment field %s definition is invalid.', $field_name));
+    }
+    $field_definition->setName($field_name);
+    $field_definition->setTargetEntityTypeId('application_attachment');
+    $update_manager->installFieldStorageDefinition(
+      $field_name,
+      'application_attachment',
+      'beantragt_application',
+      $field_definition,
+    );
+    $installed[] = $field_name;
+  }
+
+  return $installed === []
+    ? 'Application attachment scan fields already installed.'
+    : 'Installed application attachment scan fields: ' . implode(', ', $installed) . '.';
+}
+
+/**
+ * Grants quarantine management to department administrators.
+ */
+function beantragt_application_update_10009(): string {
+  $role = \Drupal::entityTypeManager()->getStorage('user_role')->load('department_admin');
+  if (!$role) {
+    return 'department_admin role not found.';
+  }
+
+  $permission = 'manage quarantined application attachments';
+  if ($role->hasPermission($permission)) {
+    return 'department_admin quarantine permission already present.';
+  }
+
+  $role->grantPermission($permission);
+  $role->save();
+  return 'Granted quarantine attachment permission to department_admin.';
+}
+
+/**
+ * Implements hook_install().
+ */
+function beantragt_application_install(): void {
+  _beantragt_application_initialize_message_baseline();
+  $messages = [];
+  $messages = array_merge($messages, _beantragt_application_ensure_service_account());
+  $messages = array_merge($messages, _beantragt_application_ensure_default_settings());
+  $messages = array_merge($messages, _beantragt_application_grant_delegate_permissions());
+
+  if (!empty($messages)) {
+    \Drupal::logger('beantragt_application')->notice(implode(' ', $messages));
+  }
+}
+
+/**
+ * Ensures the service account role and user exist with correct permissions.
+ *
+ * @return string[]
+ *   Status messages.
+ */
+function _beantragt_application_ensure_service_account(): array {
+  $messages = [];
+  $role_storage = \Drupal::entityTypeManager()->getStorage('user_role');
+  $role = $role_storage->load('service_account');
+  if (!$role) {
+    $role = $role_storage->create([
+      'id' => 'service_account',
+      'label' => 'Service Account',
+      'weight' => 5,
+    ]);
+    $role->save();
+    $messages[] = 'Created service_account role.';
+  }
+
+  $service_permissions = [
+    'create form_schema entities',
+    'edit any form_schema entities',
+    'create application entities',
+    'create application_attachment entities',
+    'edit any application entities',
+    'view published form_schema entities',
+    'view unpublished form_schema entities',
+    'view own application entities',
+    'view published application entities',
+    'view application_attachment entities',
+    'create applicant entities',
+    'edit own applicant entities',
+    'create application_comment entities',
+    'view application_comment entities',
+    // Guided form setup: verified information sheet recommendations.
+    // The service account never gets "publish form_schema entities".
+    'record form setup recommendations',
+  ];
+  foreach ($service_permissions as $permission) {
+    $role->grantPermission($permission);
+  }
+  $role->save();
+  $messages[] = 'Granted permissions to service_account role.';
+
+  $user_storage = \Drupal::entityTypeManager()->getStorage('user');
+  $existing = $user_storage->loadByProperties(['name' => 'nuxt_service']);
+  if (empty($existing)) {
+    /** @var \Drupal\user\UserInterface $user */
+    $user = $user_storage->create([
+      'name' => 'nuxt_service',
+      'mail' => 'nuxt-service@beantragt.local',
+      'status' => 1,
+      'roles' => ['service_account'],
+    ]);
+    $user->setPassword(_beantragt_application_service_account_password());
+    $user->save();
+    $messages[] = 'Created nuxt_service user (uid=' . $user->id() . ').';
+  }
+  else {
+    $user = reset($existing);
+    if (!$user->hasRole('service_account')) {
+      $user->addRole('service_account');
+      $user->save();
+    }
+    $messages[] = 'nuxt_service user already exists (uid=' . $user->id() . ').';
+  }
+
+  /** @var \Drupal\user\RoleInterface|null $anonymous */
+  $anonymous = $role_storage->load('anonymous');
+  if ($anonymous) {
+    $anonymous->revokePermission('create form_schema entities');
+    $anonymous->revokePermission('create application entities');
+    $anonymous->revokePermission('view published application entities');
+    $anonymous->revokePermission('view unpublished application entities');
+    $anonymous->revokePermission('view application_attachment entities');
+    $anonymous->revokePermission('create applicant entities');
+    $anonymous->revokePermission('edit own applicant entities');
+    $anonymous->save();
+    $messages[] = 'Revoked create permissions from anonymous role.';
+  }
+
+  /** @var \Drupal\user\RoleInterface|null $authenticated */
+  $authenticated = $role_storage->load('authenticated');
+  if ($authenticated) {
+    $authenticated->revokePermission('create form_schema entities');
+    $authenticated->revokePermission('create application entities');
+    $authenticated->revokePermission('create applicant entities');
+    $authenticated->revokePermission('edit own applicant entities');
+    $authenticated->save();
+    $messages[] = 'Revoked direct mutation permissions from authenticated role.';
+  }
+
+  return $messages;
+}
+
+/**
+ * Revokes permissions from the service account role.
+ *
+ * @param string[] $permissions
+ *   Permissions to revoke.
+ *
+ * @return string
+ *   Update status message.
+ */
+function _beantragt_application_revoke_service_account_permissions(array $permissions): string {
+  $role = \Drupal::entityTypeManager()->getStorage('user_role')->load('service_account');
+  if (!$role) {
+    return 'service_account role not found.';
+  }
+
+  $revoked = [];
+  foreach ($permissions as $permission) {
+    if ($role->hasPermission($permission)) {
+      $role->revokePermission($permission);
+      $revoked[] = $permission;
+    }
+  }
+
+  if (!$revoked) {
+    return 'service_account permissions already hardened.';
+  }
+
+  $role->save();
+  return 'Revoked service_account permissions: ' . implode(', ', $revoked) . '.';
+}
+
+/**
+ * Returns the configured service account password or a generated local value.
+ *
+ * @return string
+ *   The password to set during fresh local installs.
+ */
+function _beantragt_application_service_account_password(): string {
+  $password = getenv('NUXT_DRUPAL_SERVICE_PASSWORD');
+  if (is_string($password) && $password !== '') {
+    return $password;
+  }
+
+  return \Drupal::service('password_generator')->generate(32);
+}
+
+/**
+ * Ensures default module settings and GDPR permissions exist.
+ *
+ * @return string[]
+ *   Status messages.
+ */
+function _beantragt_application_ensure_default_settings(): array {
+  $messages = [];
+  $config = \Drupal::configFactory()->getEditable('beantragt_application.settings');
+  if ($config->isNew()) {
+    $config
+      ->set('data_retention_days', 730)
+      ->set('attachment_max_total_bytes_per_application', 52428800)
+      ->set('confirmation_token_ttl_hours', 72)
+      ->set('confirmation_purge_hours', 168)
+      ->save();
+    $messages[] = 'Created beantragt_application.settings with retention and attachment quota defaults.';
+  }
+  else {
+    $changed = FALSE;
+    if ($config->get('attachment_max_total_bytes_per_application') === NULL) {
+      $config->set('attachment_max_total_bytes_per_application', 52428800);
+      $changed = TRUE;
+    }
+    if ($config->get('confirmation_token_ttl_hours') === NULL) {
+      $config->set('confirmation_token_ttl_hours', 72);
+      $changed = TRUE;
+    }
+    if ($config->get('confirmation_purge_hours') === NULL) {
+      $config->set('confirmation_purge_hours', 168);
+      $changed = TRUE;
+    }
+    if ($changed) {
+      $config->save();
+      $messages[] = 'Updated beantragt_application.settings attachment quota defaults.';
+    }
+    $messages[] = 'beantragt_application.settings already exists.';
+  }
+
+  $role_storage = \Drupal::entityTypeManager()->getStorage('user_role');
+  /** @var \Drupal\user\RoleInterface|null $authenticated */
+  $authenticated = $role_storage->load('authenticated');
+  if ($authenticated) {
+    // Citizens never delete submitted applications themselves (they stay
+    // with the authority); update 10024 revokes the earlier grant.
+    $gdpr_permissions = [
+      'delete own applicant entities',
+      'view own applicant entities',
+      'view own application entities',
+    ];
+    foreach ($gdpr_permissions as $permission) {
+      $authenticated->grantPermission($permission);
+    }
+    $authenticated->save();
+    $messages[] = 'Granted GDPR self-service permissions to authenticated role.';
+  }
+
+  return $messages;
+}
+
+/**
+ * Adds default aggregate attachment quota settings.
+ */
+function beantragt_application_update_10010(): string {
+  $config = \Drupal::configFactory()->getEditable('beantragt_application.settings');
+  if ($config->get('attachment_max_total_bytes_per_application') === NULL) {
+    $config->set('attachment_max_total_bytes_per_application', 52428800)->save();
+    return 'Set default aggregate attachment quota to 50 MB per application.';
+  }
+  return 'Aggregate attachment quota setting already exists.';
+}
+
+/**
+ * Installs the internal application due date field.
+ */
+function beantragt_application_update_10011(): string {
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  if ($update_manager->getFieldStorageDefinition('field_due_date', 'application')) {
+    return 'Application due date field already installed.';
+  }
+
+  $entity_type = \Drupal::entityTypeManager()->getDefinition('application');
+  $field_definitions = Application::baseFieldDefinitions($entity_type);
+  $field_definition = $field_definitions['field_due_date'];
+  if (!$field_definition instanceof BaseFieldDefinition) {
+    throw new \RuntimeException('Application due date field definition is invalid.');
+  }
+  $field_definition->setName('field_due_date');
+  $field_definition->setTargetEntityTypeId('application');
+
+  $update_manager->installFieldStorageDefinition(
+    'field_due_date',
+    'application',
+    'beantragt_application',
+    $field_definition,
+  );
+
+  return 'Installed due date field on application entities.';
+}
+
+/**
+ * Installs keyed applicant email lookup hash storage.
+ */
+function beantragt_application_update_10012(): string {
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  if ($update_manager->getFieldStorageDefinition('field_applicant_email_hash', 'application')) {
+    return 'Application applicant email lookup hash field already installed.';
+  }
+
+  $entity_type = \Drupal::entityTypeManager()->getDefinition('application');
+  $field_definitions = Application::baseFieldDefinitions($entity_type);
+  $field_definition = $field_definitions['field_applicant_email_hash'];
+  if (!$field_definition instanceof BaseFieldDefinition) {
+    throw new \RuntimeException('Application applicant email lookup hash field definition is invalid.');
+  }
+  $field_definition->setName('field_applicant_email_hash');
+  $field_definition->setTargetEntityTypeId('application');
+
+  $update_manager->installFieldStorageDefinition(
+    'field_applicant_email_hash',
+    'application',
+    'beantragt_application',
+    $field_definition,
+  );
+
+  return 'Installed applicant email lookup hash field on application entities.';
+}
+
+/**
+ * Backfills protected applicant email linkage for existing applications.
+ */
+function beantragt_application_update_10013(): string {
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  if (!$update_manager->getFieldStorageDefinition('field_applicant_email_hash', 'application')) {
+    beantragt_application_update_10012();
+  }
+
+  $entity_type_manager = \Drupal::entityTypeManager();
+  $storage = $entity_type_manager->getStorage('application');
+  $ids = $storage->getQuery()
+    ->accessCheck(FALSE)
+    ->execute();
+  if ($ids === []) {
+    return 'No applications found for applicant email linkage backfill.';
+  }
+
+  /** @var \Drupal\beantragt_application\Service\ApplicationDataProtectionService $data_protection */
+  $data_protection = \Drupal::service('beantragt_application.data_protection');
+  $updated = 0;
+  foreach (array_chunk(array_values($ids), 50) as $chunk) {
+    foreach ($storage->loadMultiple($chunk) as $application) {
+      if (!$application instanceof ApplicationInterface) {
+        continue;
+      }
+      if (!$data_protection->applicationHasProtectedIdentityLinkage($application)) {
+        continue;
+      }
+
+      try {
+        $data_protection->protectApplication($application);
+        $schema_entity = $application->get('field_schema')->entity ?? NULL;
+        if ($schema_entity instanceof FormSchemaInterface) {
+          $application->refreshCrmDataFromSchema($application->getData() ?? '', $schema_entity);
+        }
+        $data_protection->protectApplicationIdentityLinkage($application);
+        $application->save();
+        $updated++;
+      }
+      catch (\Throwable $exception) {
+        throw new \RuntimeException(
+          sprintf(
+            'Failed to backfill protected applicant email linkage for application %s: %s',
+            (string) ($application->id() ?? 'unknown'),
+            $exception->getMessage(),
+          ),
+          0,
+          $exception,
+        );
+      }
+    }
+  }
+
+  return sprintf('Backfilled protected applicant email linkage for %d applications.', $updated);
+}
+
+/**
+ * Installs email confirmation fields and default settings.
+ */
+function beantragt_application_update_10014(): string {
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  $entity_type = \Drupal::entityTypeManager()->getDefinition('application');
+  $field_definitions = Application::baseFieldDefinitions($entity_type);
+  $installed = [];
+
+  foreach ([
+    'field_email_confirmed',
+    'field_email_confirmation_token_hash',
+    'field_email_confirmation_expires',
+    'field_email_confirmed_time',
+  ] as $field_name) {
+    if ($update_manager->getFieldStorageDefinition($field_name, 'application')) {
+      continue;
+    }
+    $field_definition = $field_definitions[$field_name] ?? NULL;
+    if (!$field_definition instanceof BaseFieldDefinition) {
+      throw new \RuntimeException(sprintf('Application email confirmation field %s definition is invalid.', $field_name));
+    }
+    $field_definition->setName($field_name);
+    $field_definition->setTargetEntityTypeId('application');
+    $update_manager->installFieldStorageDefinition(
+      $field_name,
+      'application',
+      'beantragt_application',
+      $field_definition,
+    );
+    $installed[] = $field_name;
+  }
+
+  $config = \Drupal::configFactory()->getEditable('beantragt_application.settings');
+  $changed = FALSE;
+  if ($config->get('confirmation_token_ttl_hours') === NULL) {
+    $config->set('confirmation_token_ttl_hours', 72);
+    $changed = TRUE;
+  }
+  if ($config->get('confirmation_purge_hours') === NULL) {
+    $config->set('confirmation_purge_hours', 168);
+    $changed = TRUE;
+  }
+  if ($changed) {
+    $config->save();
+  }
+
+  $backfilled = _beantragt_application_backfill_email_confirmation_defaults();
+
+  return 'Installed application email confirmation fields: '
+    . ($installed === [] ? 'none' : implode(', ', $installed))
+    . '; ensured confirmation settings defaults; backfilled '
+    . $backfilled
+    . ' existing application and revision rows as confirmed.';
+}
+
+/**
+ * Backfills existing applications as confirmed for query-level gating.
+ */
+function beantragt_application_update_10015(): string {
+  $backfilled = _beantragt_application_backfill_email_confirmation_defaults();
+
+  return sprintf('Backfilled %d existing application and revision rows as email-confirmed.', $backfilled);
+}
+
+/**
+ * Backfills existing application revisions as confirmed.
+ */
+function beantragt_application_update_10016(): string {
+  _beantragt_application_ensure_email_confirmation_revision_storage();
+  $backfilled = _beantragt_application_backfill_email_confirmation_defaults();
+
+  return sprintf('Ensured email confirmation revision storage; backfilled %d existing application and revision rows as email-confirmed.', $backfilled);
+}
+
+/**
+ * Grants delegation permission to scoped department administrators.
+ */
+function beantragt_application_update_10017(): string {
+  $messages = _beantragt_application_grant_delegate_permissions();
+
+  return $messages === []
+    ? 'Delegation permission grants already present or roles unavailable.'
+    : implode(' ', $messages);
+}
+
+/**
+ * Installs attachment-specific consent storage for external AI analysis.
+ */
+function beantragt_application_update_10018(): string {
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  if ($update_manager->getFieldStorageDefinition('field_external_analysis_consent', 'application_attachment')) {
+    return 'External attachment analysis consent field already installed.';
+  }
+
+  $entity_type = \Drupal::entityTypeManager()->getDefinition('application_attachment');
+  $field_definitions = ApplicationAttachment::baseFieldDefinitions($entity_type);
+  $field_definition = $field_definitions['field_external_analysis_consent'] ?? NULL;
+  if (!$field_definition instanceof BaseFieldDefinition) {
+    throw new \RuntimeException('External attachment analysis consent field definition is invalid.');
+  }
+  $field_definition->setName('field_external_analysis_consent');
+  $field_definition->setTargetEntityTypeId('application_attachment');
+  $update_manager->installFieldStorageDefinition(
+    'field_external_analysis_consent',
+    'application_attachment',
+    'beantragt_application',
+    $field_definition,
+  );
+
+  return 'Installed external attachment analysis consent field.';
+}
+
+/**
+ * Installs document guard status, report, and derivative storage.
+ */
+function beantragt_application_update_10019(): string {
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  $entity_type = \Drupal::entityTypeManager()->getDefinition('application_attachment');
+  $field_definitions = ApplicationAttachment::baseFieldDefinitions($entity_type);
+  $installed = [];
+
+  foreach (['field_guard_status', 'field_guard_report', 'field_guard_derivative'] as $field_name) {
+    if ($update_manager->getFieldStorageDefinition($field_name, 'application_attachment')) {
+      continue;
+    }
+    $field_definition = $field_definitions[$field_name] ?? NULL;
+    if (!$field_definition instanceof BaseFieldDefinition) {
+      throw new \RuntimeException(sprintf('Document guard field definition %s is invalid.', $field_name));
+    }
+    $field_definition->setName($field_name);
+    $field_definition->setTargetEntityTypeId('application_attachment');
+    $update_manager->installFieldStorageDefinition(
+      $field_name,
+      'application_attachment',
+      'beantragt_application',
+      $field_definition,
+    );
+    $installed[] = $field_name;
+  }
+
+  return $installed === []
+    ? 'Document guard attachment fields already installed.'
+    : 'Installed document guard attachment fields: ' . implode(', ', $installed) . '.';
+}
+
+/**
+ * Marks legacy applications confirmed after installing the confirmation field.
+ */
+function _beantragt_application_backfill_email_confirmation_defaults(): int {
+  $schema = \Drupal::database()->schema();
+  $backfilled = 0;
+
+  if ($schema->tableExists('application') && $schema->fieldExists('application', 'field_email_confirmed')) {
+    $backfilled += (int) \Drupal::database()
+      ->update('application')
+      ->fields(['field_email_confirmed' => 1])
+      ->isNull('field_email_confirmed')
+      ->execute();
+  }
+
+  if ($schema->tableExists('application_revision') && $schema->fieldExists('application_revision', 'field_email_confirmed')) {
+    $backfilled += (int) \Drupal::database()
+      ->update('application_revision')
+      ->fields(['field_email_confirmed' => 1])
+      ->isNull('field_email_confirmed')
+      ->execute();
+  }
+
+  return $backfilled;
+}
+
+/**
+ * Grants department administrators the delegation permission when they exist.
+ *
+ * @return string[]
+ *   Status messages.
+ */
+function _beantragt_application_grant_delegate_permissions(): array {
+  $available_permissions = array_keys(\Drupal::service('user.permissions')->getPermissions());
+  $permission = 'delegate applications';
+  if (!in_array($permission, $available_permissions, TRUE)) {
+    return ['Delegation permission is not available yet.'];
+  }
+
+  $messages = [];
+  $role_storage = \Drupal::entityTypeManager()->getStorage('user_role');
+  foreach (['department_admin'] as $role_id) {
+    $role = $role_storage->load($role_id);
+    if (!$role) {
+      continue;
+    }
+    if ($role->hasPermission($permission)) {
+      continue;
+    }
+    $role->grantPermission($permission);
+    $role->save();
+    $messages[] = 'Granted delegate applications permission to ' . $role_id . '.';
+  }
+
+  return $messages;
+}
+
+/**
+ * Ensures field_email_confirmed is stored on application revisions.
+ */
+function _beantragt_application_ensure_email_confirmation_revision_storage(): void {
+  $schema = \Drupal::database()->schema();
+  if (!$schema->tableExists('application_revision')
+    || $schema->fieldExists('application_revision', 'field_email_confirmed')) {
+    return;
+  }
+
+  $update_manager = \Drupal::entityDefinitionUpdateManager();
+  if (!$update_manager->getFieldStorageDefinition('field_email_confirmed', 'application')) {
+    return;
+  }
+
+  $entity_type = \Drupal::entityTypeManager()->getDefinition('application');
+  $field_definitions = Application::baseFieldDefinitions($entity_type);
+  $field_definition = $field_definitions['field_email_confirmed'] ?? NULL;
+  if (!$field_definition instanceof BaseFieldDefinition) {
+    throw new \RuntimeException('Application email confirmation field definition is invalid.');
+  }
+  $field_definition->setName('field_email_confirmed');
+  $field_definition->setTargetEntityTypeId('application');
+  $update_manager->updateFieldStorageDefinition($field_definition);
+
+  $revision_schema = \Drupal::database()->schema();
+  if ($revision_schema->fieldExists('application_revision', 'field_email_confirmed')) {
+    return;
+  }
+
+  $revision_schema->addField('application_revision', 'field_email_confirmed', [
+    'description' => 'Whether the applicant email has completed double opt-in.',
+    'type' => 'int',
+    'size' => 'tiny',
+    'not null' => FALSE,
+  ]);
+}
+
+/**
+ * Installs the application's immutable submitted form revision reference.
+ */
+function beantragt_application_update_10020(): string {
+  $updates = \Drupal::entityDefinitionUpdateManager();
+  if (!$updates->getFieldStorageDefinition('field_schema_revision_id', 'application') instanceof FieldStorageDefinitionInterface) {
+    $field = BaseFieldDefinition::create('integer')->setLabel('Submitted schema revision')->setRevisionable(TRUE)->setReadOnly(TRUE);
+    $updates->installFieldStorageDefinition('field_schema_revision_id', 'application', 'beantragt_application', $field);
+  }
+  return 'Installed the application form revision reference.';
+}
+
+/**
+ * Installs immutable positive-scan proof and original submission provenance.
+ */
+function beantragt_application_update_10021(): string {
+  $updates = \Drupal::entityDefinitionUpdateManager();
+  $fields = [
+    'field_scan_sha256' => BaseFieldDefinition::create('string')->setLabel('Verified scan SHA-256')->setSetting('max_length', 64)->setReadOnly(TRUE),
+    'field_submission_revision_id' => BaseFieldDefinition::create('integer')->setLabel('Original submission revision')->setReadOnly(TRUE),
+  ];
+  foreach ($fields as $name => $field) {
+    if (!$updates->getFieldStorageDefinition($name, 'application_attachment') instanceof FieldStorageDefinitionInterface) {
+      $updates->installFieldStorageDefinition($name, 'application_attachment', 'beantragt_application', $field);
+    }
+  }
+  return 'Installed attachment scan proof and original submission provenance without guessing historical values.';
+}
+
+/**
+ * Creates the audit table for staff reads of protected application values.
+ */
+function beantragt_application_update_10022(): string {
+  $schema = \Drupal::database()->schema();
+  if ($schema->tableExists(ProtectedAccessLog::TABLE)) {
+    return 'Protected access log table already exists.';
+  }
+  $schema->createTable(ProtectedAccessLog::TABLE, ProtectedAccessLog::schema());
+  return 'Created the protected access log table.';
+}
+
+/**
+ * Installs the profile and bank consent fields on applications.
+ *
+ * Existing applications keep both consents FALSE, so applicant profile sync
+ * stays off for them until a citizen submits with consent.
+ */
+function beantragt_application_update_10023(): string {
+  $updates = \Drupal::entityDefinitionUpdateManager();
+  $installed = [];
+  foreach (Application::consentBaseFieldDefinitions() as $name => $field) {
+    if ($updates->getFieldStorageDefinition($name, 'application') instanceof FieldStorageDefinitionInterface) {
+      continue;
+    }
+    $field->setName($name);
+    $field->setTargetEntityTypeId('application');
+    $updates->installFieldStorageDefinition($name, 'application', 'beantragt_application', $field);
+    $installed[] = $name;
+  }
+  return $installed === []
+    ? 'Application consent fields already installed.'
+    : 'Installed application consent fields: ' . implode(', ', $installed) . '.';
+}
+
+/**
+ * Revokes the citizen permission to delete own submitted applications.
+ *
+ * A submitted application belongs to the record of the authority. Citizens
+ * delete their account, profile and unconfirmed submissions under "Meine
+ * Daten"; the application stays until retention or staff remove it.
+ */
+function beantragt_application_update_10024(): string {
+  $role = \Drupal::entityTypeManager()->getStorage('user_role')->load('authenticated');
+  if (!$role instanceof RoleInterface || !$role->hasPermission('delete own application entities')) {
+    return 'The authenticated role does not hold "delete own application entities".';
+  }
+  $role->revokePermission('delete own application entities');
+  $role->save();
+  return 'Revoked "delete own application entities" from the authenticated role.';
+}
+
+/**
+ * Adds typed subjects to protected reads and backfills application UUIDs.
+ */
+function beantragt_application_update_10025(): string {
+  $database = \Drupal::database();
+  $schema = $database->schema();
+  $table = ProtectedAccessLog::TABLE;
+  $definition = ProtectedAccessLog::schema();
+  foreach (['subject_type', 'subject_uuid'] as $field) {
+    if (!$schema->fieldExists($table, $field)) {
+      $schema->addField($table, $field, $definition['fields'][$field]);
+    }
+  }
+  $database->update($table)->expression('subject_uuid', 'application_uuid')->condition('subject_type', 'application')->condition('subject_uuid', '')->execute();
+  if (!$schema->indexExists($table, 'subject')) {
+    $schema->addIndex($table, 'subject', ['subject_type', 'subject_uuid'], $definition);
+  }
+  return 'Protected access subjects installed.';
+}
+
+/**
+ * Adds server-managed application intake provenance.
+ */
+function beantragt_application_update_10026(): string {
+  $updates = \Drupal::entityDefinitionUpdateManager();
+  $fields = \Drupal::service('entity_field.manager')->getFieldStorageDefinitions('application');
+  foreach (['field_origin', 'field_bulk_case'] as $name) {
+    if ($name === 'field_origin' && $fields[$name] instanceof BaseFieldDefinition) {
+      $fields[$name]->setInitialValue('citizen');
+    }
+    if (isset($fields[$name]) && !$updates->getFieldStorageDefinition($name, 'application')) {
+      $updates->installFieldStorageDefinition($name, 'application', $name === 'field_bulk_case' ? 'beantragt_bulk' : 'beantragt_application', $fields[$name]);
+    }
+  }
+  return 'Application bulk provenance installed.';
+}
+
+/**
+ * Backfills citizen provenance on rows created before bulk intake existed.
+ */
+function beantragt_application_update_10027(): void {
+  $database = \Drupal::database();
+  foreach (['application', 'application_revision'] as $table) {
+    if ($database->schema()->fieldExists($table, 'field_origin')) {
+      $database->update($table)->fields(['field_origin' => 'citizen'])->isNull('field_origin')->execute();
+    }
+  }
+}
+
+/**
+ * Encrypts existing extracted attachment analysis values in batches of 100.
+ */
+function beantragt_application_update_10028(array &$sandbox): string {
+  /** @var \Drupal\beantragt_application\Service\ApplicationDataProtectionService $protection */
+  $protection = \Drupal::service('beantragt_application.data_protection');
+  // Fail even on an empty installation when the key is not configured.
+  $protection->protectAnalysisResult([]);
+  $database = \Drupal::database();
+  if (!isset($sandbox['last_id'])) {
+    $sandbox['last_id'] = 0;
+    $sandbox['processed'] = 0;
+    $sandbox['updated'] = 0;
+    $sandbox['total'] = (int) $database->select('application_attachment', 'a')
+      ->condition('field_analysis_metadata', '', '<>')->countQuery()->execute()->fetchField();
+  }
+  $rows = $database->select('application_attachment', 'a')
+    ->fields('a', ['id', 'field_analysis_metadata'])
+    ->condition('id', $sandbox['last_id'], '>')
+    ->condition('field_analysis_metadata', '', '<>')
+    ->orderBy('id')->range(0, 100)->execute()->fetchAll();
+  foreach ($rows as $row) {
+    $raw = (string) $row->field_analysis_metadata;
+    try {
+      $object = json_decode($raw, FALSE, 512, JSON_THROW_ON_ERROR);
+      $metadata = json_decode($raw, TRUE, 512, JSON_THROW_ON_ERROR);
+    }
+    catch (\JsonException $exception) {
+      throw new \RuntimeException(sprintf('Malformed analysis metadata JSON for attachment %d.', $row->id), 0, $exception);
+    }
+    if (!$object instanceof \stdClass) {
+      throw new \RuntimeException(sprintf('Analysis metadata for attachment %d must be a JSON object.', $row->id));
+    }
+    try {
+      $protected = $metadata;
+      if (is_array($protected['result'] ?? NULL)) {
+        $protected['result'] = $protection->protectAnalysisResult($protected['result']);
+      }
+      foreach ($protected['stories'] ?? [] as $name => $record) {
+        if (is_array($record['result'] ?? NULL)) {
+          $protected['stories'][$name]['result'] = $protection->protectAnalysisResult($record['result']);
+        }
+      }
+      $encoded = $protected !== $metadata
+        ? json_encode($protected, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)
+        : NULL;
+    }
+    catch (\Throwable $exception) {
+      throw new \RuntimeException(sprintf('Unable to encrypt analysis metadata for attachment %d.', $row->id), 0, $exception);
+    }
+    if ($encoded !== NULL) {
+      if (strlen($encoded) > 65536) {
+        throw new \RuntimeException(sprintf('Encrypted analysis metadata for attachment %d exceeds 65536 bytes.', $row->id));
+      }
+      // Compare-and-swap prevents overwriting a concurrent analysis callback.
+      try {
+        $changed = $database->update('application_attachment')
+          ->fields(['field_analysis_metadata' => $encoded])
+          ->condition('id', $row->id)
+          ->condition('field_analysis_metadata', $raw)->execute();
+      }
+      catch (\Throwable $exception) {
+        throw new \RuntimeException(sprintf('Unable to save encrypted analysis metadata for attachment %d.', $row->id), 0, $exception);
+      }
+      if ($changed !== 1) {
+        throw new \RuntimeException(sprintf('Analysis metadata for attachment %d changed during encryption; rerun the update.', $row->id));
+      }
+      \Drupal::entityTypeManager()->getStorage('application_attachment')->resetCache([(int) $row->id]);
+      $sandbox['updated']++;
+    }
+    $sandbox['last_id'] = (int) $row->id;
+    $sandbox['processed']++;
+  }
+  $sandbox['#finished'] = count($rows) < 100 ? 1 : min(0.99, $sandbox['processed'] / max(1, $sandbox['total']));
+  return sprintf('Encrypted extracted analysis values on %d attachments (%d processed).', $sandbox['updated'], $sandbox['processed']);
+}
+
+/**
+ * Adds the server-managed delivery route and its record to applications.
+ *
+ * Existing applications get the route portal and an empty record; bulk
+ * applications need no backfill, provision sends them by post anyway.
+ */
+function beantragt_application_update_10029(): string {
+  $updates = \Drupal::entityDefinitionUpdateManager();
+  $fields = \Drupal::service('entity_field.manager')->getFieldStorageDefinitions('application');
+  foreach (['field_delivery_route', 'field_delivery_record'] as $name) {
+    if ($name === 'field_delivery_route' && $fields[$name] instanceof BaseFieldDefinition) {
+      $fields[$name]->setInitialValue('portal');
+    }
+    if (isset($fields[$name]) && !$updates->getFieldStorageDefinition($name, 'application')) {
+      $updates->installFieldStorageDefinition($name, 'application', 'beantragt_application', $fields[$name]);
+    }
+  }
+  return 'Application delivery route installed.';
+}
+
+/**
+ * Adds provenance, receipt date and receipt record to attachments.
+ *
+ * Existing rows stay empty (Nachreichung step 2, D9).
+ */
+function beantragt_application_update_10030(): string {
+  $updates = \Drupal::entityDefinitionUpdateManager();
+  $fields = \Drupal::service('entity_field.manager')->getFieldStorageDefinitions('application_attachment');
+  $installed = 0;
+  foreach (['field_provenance', 'field_received_on', 'field_nachreichung'] as $name) {
+    if (isset($fields[$name]) && !$updates->getFieldStorageDefinition($name, 'application_attachment')) {
+      $updates->installFieldStorageDefinition($name, 'application_attachment', 'beantragt_application', $fields[$name]);
+      $installed++;
+    }
+  }
+  return "Installed $installed attachment fields.";
+}
+
+/**
+ * Grants the service account the form setup recommendation permission.
+ *
+ * Guided form setup: only the Nuxt service account stores verified
+ * information sheet recommendations. Publishing is not granted.
+ */
+function beantragt_application_update_10031(): string {
+  $role = \Drupal::entityTypeManager()->getStorage('user_role')->load('service_account');
+  if (!$role instanceof RoleInterface) {
+    return 'service_account role not found.';
+  }
+  if ($role->hasPermission('record form setup recommendations')) {
+    return 'service_account already records form setup recommendations.';
+  }
+  $role->grantPermission('record form setup recommendations');
+  $role->save();
+  return 'Granted the form setup recommendation permission to service_account.';
+}
+
+/**
+ * Adds per-staff read positions for public applicant messages.
+ */
+function beantragt_application_update_10032(): string {
+  $schema = \Drupal::database()->schema();
+  if (!$schema->tableExists(ApplicationMessageReadState::TABLE)) {
+    $schema->createTable(ApplicationMessageReadState::TABLE, ApplicationMessageReadState::schema());
+  }
+  else {
+    foreach (['kind', 'seen_tokens', 'legacy_seen_at'] as $field) {
+      if (!$schema->fieldExists(ApplicationMessageReadState::TABLE, $field)) {
+        $schema->addField(ApplicationMessageReadState::TABLE, $field, ApplicationMessageReadState::schema()['fields'][$field]);
+
+      }
+    }
+  }
+  // Repair the key even after an interrupted previous column update.
+  $schema->dropPrimaryKey(ApplicationMessageReadState::TABLE);
+  $schema->addPrimaryKey(ApplicationMessageReadState::TABLE, ['uid', 'application_id', 'kind']);
+  if (!$schema->tableExists(ApplicationEventReadState::RECEIPTS_TABLE)) {
+    $schema->createTable(ApplicationEventReadState::RECEIPTS_TABLE, ApplicationEventReadState::receiptSchema());
+  }
+  _beantragt_application_initialize_message_baseline();
+  return 'Installed per-staff, per-kind application event read positions.';
+}
+
+/**
+ * Sets the first-read baseline once, without changing existing read positions.
+ */
+function _beantragt_application_initialize_message_baseline(): void {
+  $state = \Drupal::state();
+  if ($state->get(ApplicationMessageReadState::BASELINE_STATE) === NULL) {
+    $state->set(ApplicationMessageReadState::BASELINE_STATE, \Drupal::time()->getCurrentTime());
+  }
+}
+
+/**
+ * Adds revisioned, server-managed proof assignments to applications.
+ */
+function beantragt_application_update_10040(): string {
+  $name = 'field_proof_assignments';
+  $updates = \Drupal::entityDefinitionUpdateManager();
+  if (!$updates->getFieldStorageDefinition($name, 'application')) {
+    $fields = \Drupal::service('entity_field.manager')->getFieldStorageDefinitions('application');
+    $updates->installFieldStorageDefinition($name, 'application', 'beantragt_application', $fields[$name]);
+  }
+  return 'Installed revisioned application proof assignments.';
+}
+
+/**
+ * Stores the original public form title for new submission receipts.
+ */
+function beantragt_application_update_10041(): string {
+  $name = 'field_receipt_form_title';
+  $updates = \Drupal::entityDefinitionUpdateManager();
+  if (!$updates->getFieldStorageDefinition($name, 'application')) {
+    $field = BaseFieldDefinition::create('string')
+      ->setLabel('Submitted public form title')
+      ->setSetting('max_length', 255)
+      ->setReadOnly(TRUE)
+      ->setInternal(TRUE);
+    $updates->installFieldStorageDefinition($name, 'application', 'beantragt_application', $field);
+  }
+  return 'Installed the public receipt form title field.';
+}
+
+/**
+ * Encrypts existing protected application values in current and historic rows.
+ */
+function beantragt_application_update_10042(array &$sandbox): string {
+  _beantragt_application_protect_storage_batch($sandbox);
+  $state = \Drupal::state();
+  $pending = array_values(array_unique([
+    ...$state->get(ApplicationDataProtectionService::BACKFILL_PENDING_STATE_KEY, []),
+    ...array_keys($sandbox['unresolved']),
+  ]));
+  if ($pending !== []) {
+    $state->set(ApplicationDataProtectionService::BACKFILL_PENDING_STATE_KEY, $pending);
+  }
+  return sprintf('Encrypted protected data in %d application storage rows. Skipped applications with unavailable submitted form definitions (%d).', $sandbox['updated'], count($pending));
+}
+
+/**
+ * Retries both storage tables for applications skipped by update 10042.
+ *
+ * @return array{updated: int, pending: int}
+ *   Number of encrypted rows and applications still awaiting protection.
+ */
+function beantragt_application_retry_data_protection(): array {
+  $state = \Drupal::state();
+  $ids = $state->get(ApplicationDataProtectionService::BACKFILL_PENDING_STATE_KEY, []);
+  $storage = \Drupal::entityTypeManager()->getStorage('application');
+  $updated = 0;
+  $pending = [];
+  foreach (array_chunk($ids, 100) as $chunk) {
+    // A restored revision or repaired reference may predate cached rows.
+    $storage->resetCache($chunk);
+    $sandbox = [];
+    do {
+      _beantragt_application_protect_storage_batch($sandbox, $chunk);
+    } while ($sandbox['#finished'] < 1);
+    $updated += $sandbox['updated'];
+    $pending += $sandbox['unresolved'];
+  }
+  $state->set(ApplicationDataProtectionService::BACKFILL_PENDING_STATE_KEY, array_keys($pending));
+  return ['updated' => $updated, 'pending' => count($pending)];
+}
+
+/**
+ * Protects one storage batch, optionally restricted to pending applications.
+ */
+function _beantragt_application_protect_storage_batch(array &$sandbox, array $ids = []): void {
+  $database = \Drupal::database();
+  $storage = \Drupal::entityTypeManager()->getStorage('application');
+  assert($storage instanceof RevisionableStorageInterface);
+  /** @var \Drupal\beantragt_application\Service\ApplicationDataProtectionService $protection */
+  $protection = \Drupal::service('beantragt_application.data_protection');
+  $tables = ['application_revision' => 'revision_id', 'application' => 'id'];
+  $sandbox += ['table' => 'application_revision', 'last_id' => 0, 'updated' => 0, 'unresolved' => []];
+  $table = $sandbox['table'];
+  $key = $tables[$table];
+
+  $query = $database->select($table, 'a')
+    ->fields('a', ['id', 'revision_id', 'field_data'])
+    ->condition($key, $sandbox['last_id'], '>')
+    ->condition('field_data', '', '<>')
+    ->orderBy($key)
+    ->range(0, 100);
+  if ($ids !== []) {
+    $query->condition('id', $ids, 'IN');
+  }
+  $rows = $query->execute()->fetchAll();
+  foreach ($rows as $row) {
+    $raw = (string) $row->field_data;
+    try {
+      $application = $table === 'application_revision'
+        ? $storage->loadRevisionUnchanged($row->revision_id)
+        : $storage->loadUnchanged($row->id);
+      if (!$application instanceof ApplicationInterface) {
+        throw new \RuntimeException('Application revision is unavailable.');
+      }
+      $application = clone $application;
+      $application->set('field_data', $raw);
+      $protection->protectApplication($application);
+      $protected = $application->getData();
+      if ($protected !== $raw) {
+        // Preserve concurrent writes, including a new default revision.
+        $changed = $database->update($table)
+          ->fields(['field_data' => $protected])
+          ->condition($key, $row->{$key})
+          ->condition('revision_id', $row->revision_id)
+          ->condition('field_data', $raw)
+          ->execute();
+        if ($changed !== 1) {
+          throw new \RuntimeException('The row changed concurrently.');
+        }
+        $storage->resetCache([(int) $row->id]);
+        $sandbox['updated']++;
+      }
+    }
+    catch (UnresolvableApplicationSchemaException) {
+      $sandbox['unresolved'][(int) $row->id] = TRUE;
+    }
+    catch (\Throwable) {
+      // Storage exceptions can contain query parameters with applicant data.
+      throw new UpdateException(sprintf(
+        'Could not protect application %d, revision %d, in %s. Check the submitted form revision and encryption key, then rerun the update.',
+        $row->id,
+        $row->revision_id,
+        $table,
+      ));
+    }
+    $sandbox['last_id'] = (int) $row->{$key};
+  }
+  $sandbox['#finished'] = $table === 'application_revision' ? 0.25 : 0.75;
+  if (count($rows) < 100) {
+    if ($table === 'application_revision') {
+      $sandbox['table'] = 'application';
+      $sandbox['last_id'] = 0;
+      $sandbox['#finished'] = 0.5;
+    }
+    else {
+      $sandbox['#finished'] = 1;
+    }
+  }
+}

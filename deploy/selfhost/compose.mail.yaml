@@ -1,0 +1,17 @@
+services:
+  drupal-mailpit:
+    depends_on:
+      mailpit:
+        condition: service_started
+    environment:
+      SMTP_PORT: "${SMTP_PORT:-1025}"
+      SMTP_FROM: "${SMTP_FROM:-noreply@example.invalid}"
+
+  drupal-smtp:
+    environment:
+      SMTP_PORT: "${SMTP_PORT:-587}"
+      SMTP_FROM: "${SMTP_FROM:-}"
+      SMTP_PASSWORD_FILE: /run/secrets/SMTP_PASSWORD
+    secrets:
+      - source: smtp-password
+        target: SMTP_PASSWORD

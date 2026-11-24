@@ -1,0 +1,182 @@
+application_confirmation_request:
+  subject: 'Bitte bestätigen Sie Ihre E-Mail-Adresse'
+  body: |
+    Guten Tag,
+
+    bitte bestätigen Sie Ihre E-Mail-Adresse, damit Ihre Einreichung
+    verarbeitet werden kann.
+
+    E-Mail-Adresse bestätigen: @confirmation_url
+
+    Wenn Sie diesen Antrag nicht gestellt haben, können Sie diese Nachricht
+    ignorieren.
+
+application_confirmation:
+  subject: 'Eingangsbestätigung: Ihr Antrag @reference_number'
+  body: |
+    Guten Tag @full_name,
+
+    vielen Dank für Ihren Antrag "@form_title".
+
+    Ihr Aktenzeichen lautet: @reference_number
+    Eingangsdatum: @application_date
+    Antrag ansehen: @citizen_application_url
+
+    Wir werden Ihren Antrag schnellstmöglich bearbeiten. Bei Rückfragen
+    geben Sie bitte Ihr Aktenzeichen an.
+
+    @org_name
+
+status_change:
+  subject: 'Statusänderung zu Ihrem Antrag @reference_number'
+  body: |
+    Guten Tag @full_name,
+
+    der Status Ihres Antrags "@form_title" (Aktenzeichen: @reference_number)
+    hat sich geändert.
+
+    Vorheriger Status: @old_status
+    Neuer Status: @new_status
+    Antrag ansehen: @citizen_application_url
+
+    Bei Fragen wenden Sie sich bitte an Ihre zuständige Dienststelle.
+
+    @org_name
+
+approval:
+  subject: 'Ihr Antrag @reference_number wurde genehmigt'
+  body: |
+    Guten Tag @full_name,
+
+    Ihr Antrag "@form_title" (Aktenzeichen: @reference_number) wurde genehmigt.
+    Antrag ansehen: @citizen_application_url
+
+    Sollten weitere Schritte erforderlich sein, werden wir Sie gesondert
+    informieren.
+
+    @org_name
+
+rejection:
+  subject: 'Ihr Antrag @reference_number wurde abgelehnt'
+  body: |
+    Guten Tag @full_name,
+
+    Ihr Antrag "@form_title" (Aktenzeichen: @reference_number) wurde leider
+    abgelehnt.
+
+    Begründung: @rejection_reason
+    Antrag ansehen: @citizen_application_url
+
+    Wenn Sie Fragen zu dieser Entscheidung haben, wenden Sie sich bitte an
+    Ihre zuständige Dienststelle.
+
+    @org_name
+
+new_application_alert:
+  subject: 'Neuer Antrag eingegangen: @reference_number'
+  body: |
+    Ein neuer Antrag ist eingegangen.
+
+    Formular: @form_title
+    Aktenzeichen: @reference_number
+    Eingangsdatum: @application_date
+    Antragsteller: @full_name
+    Antrag öffnen: @admin_application_url
+
+    Bitte prüfen Sie den Antrag zeitnah.
+
+assignment_alert:
+  subject: 'Antrag zugewiesen: @reference_number'
+  body: |
+    Ihnen oder Ihrem Team wurde ein Antrag zugewiesen.
+
+    Formular: @form_title
+    Aktenzeichen: @reference_number
+    Zugewiesen an: @assigned_to@assigned_team
+    Antrag öffnen: @admin_application_url
+
+    Bitte prüfen Sie den Vorgang zeitnah.
+
+delegation_alert:
+  subject: 'Delegation: Antrag @reference_number'
+  body: |
+    Ein Antrag wurde an Ihre Dienststelle delegiert.
+
+    Aktenzeichen: @reference_number
+    Von: @source_org
+    An: @target_org
+    Interner Hinweis: @note
+    Antrag öffnen: @admin_application_url
+
+    Bitte prüfen Sie die neue Zuständigkeit zeitnah.
+
+escalation_alert:
+  subject: 'Eskalation: Antrag @reference_number seit @escalation_days Tagen unbearbeitet'
+  body: |
+    Der folgende Antrag ist seit @escalation_days Tagen unbearbeitet und
+    erfordert Ihre Aufmerksamkeit.
+
+    Formular: @form_title
+    Aktenzeichen: @reference_number
+    Aktueller Status: @new_status
+    Zugewiesen an: @assigned_to
+    Antrag öffnen: @admin_application_url
+
+    Bitte bearbeiten Sie diesen Vorgang umgehend.
+
+deadline_alert:
+  subject: 'Wiedervorlage fällig: Antrag @reference_number'
+  body: |
+    Der folgende Antrag ist fällig oder überfällig und erfordert Ihre
+    Aufmerksamkeit.
+
+    Formular: @form_title
+    Aktenzeichen: @reference_number
+    Frist: @due_date
+    Aktueller Status: @new_status
+    Zugewiesen an: @assigned_to@assigned_team
+    Antrag öffnen: @admin_application_url
+
+    Bitte prüfen Sie diesen Vorgang zeitnah.
+
+resubmission_reminder:
+  subject: 'Wiedervorlage: Antrag @reference_number seit @days_idle Tagen ohne Änderung'
+  body: |
+    Der folgende Antrag ist seit @days_idle Tagen ohne Änderung und wurde
+    bereits @reminder_count Mal zur Wiedervorlage erinnert.
+
+    Antragsart: @form_title
+    Aktenzeichen: @reference_number
+
+    Bitte prüfen Sie, ob der Vorgang weiterbearbeitet werden muss.
+
+application_comment_staff:
+  subject: 'Rückfrage zu Ihrem Antrag @reference_number'
+  body: |
+    Guten Tag @full_name,
+
+    zu Ihrem Antrag "@form_title" (Aktenzeichen: @reference_number) liegt
+    eine Rückfrage vor.
+
+    Bitte loggen Sie sich ein, um die Rückfrage im geschützten Bereich zu
+    lesen und zu beantworten.
+    Antrag ansehen: @citizen_application_url
+
+    @org_name
+
+application_comment_citizen:
+  subject: 'Antwort vom Bürger zu Antrag @reference_number'
+  body: |
+    Zu Antrag "@form_title" (Aktenzeichen: @reference_number) ist eine
+    Antwort eingegangen.
+
+    Bitte prüfen Sie die Antwort zeitnah im geschützten Verwaltungsbereich.
+    Antrag öffnen: @admin_application_url
+
+external_response_available:
+  subject: 'Ein neues Dokument zu Ihrem Antrag @reference_number'
+  body: |
+    Zu Ihrem Antrag liegt ein neues Dokument im Bürgerportal bereit.
+
+    Bitte melden Sie sich an, um es abzurufen:
+    @citizen_application_url

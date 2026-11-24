@@ -1,0 +1,11 @@
+name: 'Beantragt Comment'
+type: module
+description: 'Provides a comment/message system for applications (Rueckfragen and replies).'
+core_version_requirement: ^11
+package: Beantragt
+dependencies:
+  - beantragt_application:beantragt_application
+  - beantragt_notification:beantragt_notification
+  - beantragt_workflow:beantragt_workflow
+  - beantragt_roles_api:beantragt_roles_api
+  - drupal:file

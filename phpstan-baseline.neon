@@ -1,0 +1,314 @@
+parameters:
+	ignoreErrors:
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Field\\FieldStorageDefinitionInterface\:\:setInternal\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: web/modules/custom/beantragt_applicant/beantragt_applicant.install
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Field\\FieldStorageDefinitionInterface\:\:setSetting\(\)\.$#'
+			identifier: method.notFound
+			count: 2
+			path: web/modules/custom/beantragt_applicant/beantragt_applicant.install
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityInterface\:\:getOwnerId\(\)\.$#'
+			identifier: method.notFound
+			count: 3
+			path: web/modules/custom/beantragt_applicant/src/ApplicantAccessControlHandler.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 1
+			path: web/modules/custom/beantragt_applicant/src/ApplicantListBuilder.php
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Field\\FieldDefinitionInterface\:\:setDefaultValue\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: web/modules/custom/beantragt_applicant/src/Entity/Applicant.php
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Field\\FieldDefinitionInterface\:\:setLabel\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: web/modules/custom/beantragt_applicant/src/Entity/Applicant.php
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityInterface\:\:getOwnerId\(\)\.$#'
+			identifier: method.notFound
+			count: 2
+			path: web/modules/custom/beantragt_application/src/ApplicationAccessControlHandler.php
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityInterface\:\:isPublished\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: web/modules/custom/beantragt_application/src/ApplicationAccessControlHandler.php
+
+		-
+			message: '#^Expression on left side of \?\? is not nullable\.$#'
+			identifier: nullCoalesce.expr
+			count: 1
+			path: web/modules/custom/beantragt_application/src/ApplicationListBuilder.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 1
+			path: web/modules/custom/beantragt_application/src/ApplicationListBuilder.php
+
+		-
+			message: '#^Using nullsafe method call on non\-nullable type Drupal\\user\\UserInterface\. Use \-\> instead\.$#'
+			identifier: nullsafe.neverNull
+			count: 1
+			path: web/modules/custom/beantragt_application/src/ApplicationListBuilder.php
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityInterface\:\:get\(\)\.$#'
+			identifier: method.notFound
+			count: 4
+			path: web/modules/custom/beantragt_application/src/Service/ReferenceNumberGenerator.php
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityInterface\:\:hasField\(\)\.$#'
+			identifier: method.notFound
+			count: 2
+			path: web/modules/custom/beantragt_application/src/Service/ReferenceNumberGenerator.php
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityInterface\:\:getOwnerId\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: web/modules/custom/beantragt_comment/src/ApplicationCommentAccessControlHandler.php
+
+		-
+			message: '#^Access to an undefined property Drupal\\Core\\Field\\FieldItemInterface\:\:\$target_id\.$#'
+			identifier: property.notFound
+			count: 1
+			path: web/modules/custom/beantragt_comment/src/Controller/CommentApiController.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 1
+			path: web/modules/custom/beantragt_comment/src/Controller/CommentApiController.php
+
+		-
+			message: '#^Strict comparison using \!\=\= between string and null will always evaluate to true\.$#'
+			identifier: notIdentical.alwaysTrue
+			count: 1
+			path: web/modules/custom/beantragt_comment/src/Entity/ApplicationComment.php
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityInterface\:\:getOwnerId\(\)\.$#'
+			identifier: method.notFound
+			count: 2
+			path: web/modules/custom/beantragt_form_schema_group/src/FormSchemaGroupAccessControlHandler.php
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityInterface\:\:isPublished\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: web/modules/custom/beantragt_form_schema_group/src/FormSchemaGroupAccessControlHandler.php
+
+		-
+			message: '#^Expression on left side of \?\? is not nullable\.$#'
+			identifier: nullCoalesce.expr
+			count: 1
+			path: web/modules/custom/beantragt_form_schema_group/src/FormSchemaGroupListBuilder.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 1
+			path: web/modules/custom/beantragt_form_schema_group/src/FormSchemaGroupListBuilder.php
+
+		-
+			message: '#^Using nullsafe method call on non\-nullable type Drupal\\user\\UserInterface\. Use \-\> instead\.$#'
+			identifier: nullsafe.neverNull
+			count: 1
+			path: web/modules/custom/beantragt_form_schema_group/src/FormSchemaGroupListBuilder.php
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityInterface\:\:get\(\)\.$#'
+			identifier: method.notFound
+			count: 6
+			path: web/modules/custom/beantragt_group/beantragt_group.install
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityInterface\:\:hasField\(\)\.$#'
+			identifier: method.notFound
+			count: 4
+			path: web/modules/custom/beantragt_group/beantragt_group.install
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityInterface\:\:set\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: web/modules/custom/beantragt_group/beantragt_group.install
+
+		-
+			message: '#^Instanceof between Drupal\\Core\\Entity\\EntityInterface and Drupal\\Core\\Entity\\EntityInterface will always evaluate to true\.$#'
+			identifier: instanceof.alwaysTrue
+			count: 1
+			path: web/modules/custom/beantragt_group/beantragt_group.install
+
+		-
+			message: '#^Right side of \|\| is always false\.$#'
+			identifier: booleanOr.rightAlwaysFalse
+			count: 2
+			path: web/modules/custom/beantragt_group/beantragt_group.install
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityInterface\:\:get\(\)\.$#'
+			identifier: method.notFound
+			count: 48
+			path: web/modules/custom/beantragt_group/beantragt_group.module
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityInterface\:\:getMember\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: web/modules/custom/beantragt_group/beantragt_group.module
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityInterface\:\:hasField\(\)\.$#'
+			identifier: method.notFound
+			count: 38
+			path: web/modules/custom/beantragt_group/beantragt_group.module
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityInterface\:\:set\(\)\.$#'
+			identifier: method.notFound
+			count: 18
+			path: web/modules/custom/beantragt_group/beantragt_group.module
+
+		-
+			message: '#^Instanceof between Drupal\\Core\\Entity\\EntityInterface and Drupal\\Core\\Entity\\EntityInterface will always evaluate to true\.$#'
+			identifier: instanceof.alwaysTrue
+			count: 1
+			path: web/modules/custom/beantragt_group/beantragt_group.module
+
+		-
+			message: '#^Left side of && is always true\.$#'
+			identifier: booleanAnd.leftAlwaysTrue
+			count: 1
+			path: web/modules/custom/beantragt_group/beantragt_group.module
+
+		-
+			message: '#^Negated boolean expression is always false\.$#'
+			identifier: booleanNot.alwaysFalse
+			count: 1
+			path: web/modules/custom/beantragt_group/beantragt_group.module
+
+		-
+			message: '#^Offset ''type'' on array\{type\: string, group_id\: int\} on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.offset
+			count: 1
+			path: web/modules/custom/beantragt_group/beantragt_group.module
+
+		-
+			message: '#^Result of && is always false\.$#'
+			identifier: booleanAnd.alwaysFalse
+			count: 1
+			path: web/modules/custom/beantragt_group/beantragt_group.module
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityInterface\:\:getDisplayName\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: web/modules/custom/beantragt_notification/src/Service/NotificationMailer.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 1
+			path: web/modules/custom/beantragt_passwordless/src/Controller/GdprController.php
+
+		-
+			message: '#^Unsafe usage of new static\(\)\.$#'
+			identifier: new.static
+			count: 1
+			path: web/modules/custom/beantragt_passwordless/src/Controller/PasswordlessAuthController.php
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Field\\FieldDefinitionInterface\:\:setName\(\)\.$#'
+			identifier: method.notFound
+			count: 3
+			path: web/modules/custom/beantragt_schema/beantragt_schema.install
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Field\\FieldDefinitionInterface\:\:setTargetEntityTypeId\(\)\.$#'
+			identifier: method.notFound
+			count: 3
+			path: web/modules/custom/beantragt_schema/beantragt_schema.install
+
+		-
+			message: '#^Parameter \#1 \$storage_definition of method Drupal\\Core\\Entity\\EntityDefinitionUpdateManagerInterface\:\:updateFieldStorageDefinition\(\) expects Drupal\\Core\\Field\\FieldStorageDefinitionInterface, Drupal\\Core\\Field\\FieldDefinitionInterface given\.$#'
+			identifier: argument.type
+			count: 3
+			path: web/modules/custom/beantragt_schema/beantragt_schema.install
+
+		-
+			message: '#^Parameter \#4 \$storage_definition of method Drupal\\Core\\Entity\\EntityDefinitionUpdateManagerInterface\:\:installFieldStorageDefinition\(\) expects Drupal\\Core\\Field\\FieldStorageDefinitionInterface, Drupal\\Core\\Field\\FieldDefinitionInterface given\.$#'
+			identifier: argument.type
+			count: 2
+			path: web/modules/custom/beantragt_schema/beantragt_schema.install
+
+		-
+			message: '#^Parameter &\$sandbox by\-ref type of function beantragt_schema_update_10004\(\) expects array, array\|null given\.$#'
+			identifier: parameterByRef.type
+			count: 1
+			path: web/modules/custom/beantragt_schema/beantragt_schema.install
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityInterface\:\:getOwnerId\(\)\.$#'
+			identifier: method.notFound
+			count: 2
+			path: web/modules/custom/beantragt_schema/src/FormSchemaAccessControlHandler.php
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityInterface\:\:isPublished\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: web/modules/custom/beantragt_schema/src/FormSchemaAccessControlHandler.php
+
+		-
+			message: '#^Expression on left side of \?\? is not nullable\.$#'
+			identifier: nullCoalesce.expr
+			count: 1
+			path: web/modules/custom/beantragt_schema/src/FormSchemaListBuilder.php
+
+		-
+			message: '#^Using nullsafe method call on non\-nullable type Drupal\\user\\UserInterface\. Use \-\> instead\.$#'
+			identifier: nullsafe.neverNull
+			count: 1
+			path: web/modules/custom/beantragt_schema/src/FormSchemaListBuilder.php
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityStorageInterface\:\:loadRevision\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: web/modules/custom/beantragt_status/src/Service/StatusBuilder.php
+
+		-
+			message: '#^Strict comparison using \=\=\= between Drupal\\Core\\Entity\\ContentEntityInterface and null will always evaluate to false\.$#'
+			identifier: identical.alwaysFalse
+			count: 1
+			path: web/modules/custom/beantragt_status/src/Service/StatusBuilder.php
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityInterface\:\:get\(\)\.$#'
+			identifier: method.notFound
+			count: 2
+			path: web/modules/custom/beantragt_workflow/src/Service/ApplicationRouter.php
+
+		-
+			message: '#^Call to an undefined method Drupal\\Core\\Entity\\EntityInterface\:\:getMember\(\)\.$#'
+			identifier: method.notFound
+			count: 1
+			path: web/modules/custom/beantragt_workflow/src/Service/ApplicationRouter.php
+

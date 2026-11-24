@@ -1,0 +1,34 @@
+<?php
+
+/**
+ * @file
+ * Primary module hooks for beantragt_maintenance.
+ */
+
+declare(strict_types=1);
+
+/**
+ * Implements hook_mail().
+ */
+function beantragt_maintenance_mail(string $key, array &$message, array $params): void {
+  if ($key !== 'break_glass_code') {
+    return;
+  }
+
+  $replacements = [
+    '@code' => $params['code'] ?? '',
+    '@expires_in' => $params['expires_in'] ?? '10',
+    '@platform_name' => $params['platform_name'] ?? 'beantragt.ai',
+  ];
+  $german = ($message['langcode'] ?? 'en') === 'de';
+  $message['subject'] = strtr(
+    $german ? '@platform_name: Wiederherstellungscode für den Wartungsmodus' : '@platform_name maintenance recovery code',
+    $replacements,
+  );
+  $message['body'][] = strtr(
+    $german
+      ? "Ihr Wiederherstellungscode für den Wartungsmodus lautet: @code\n\nDer Code läuft in @expires_in Minuten ab.\n\n@platform_name"
+      : "Your maintenance recovery code is: @code\n\nThe code expires in @expires_in minutes.\n\n@platform_name",
+    $replacements,
+  );
+}

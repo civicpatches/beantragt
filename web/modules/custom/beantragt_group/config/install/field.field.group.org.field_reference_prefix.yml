@@ -1,0 +1,18 @@
+langcode: de
+status: true
+dependencies:
+  config:
+    - field.storage.group.field_reference_prefix
+    - group.type.org
+id: group.org.field_reference_prefix
+field_name: field_reference_prefix
+entity_type: group
+bundle: org
+label: Aktenzeichen-Praefix
+description: 'Praefix fuer Vorgangsnummern (z.B. "MS-BB" fuer das Buergerbuero).'
+required: false
+translatable: false
+default_value: {  }
+default_value_callback: ''
+settings: {  }
+field_type: string

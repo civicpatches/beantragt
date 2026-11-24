@@ -1,0 +1,13 @@
+name: 'Beantragt Application'
+type: module
+description: 'Provides the Application content entity for storing filled-out form data.'
+core_version_requirement: ^11
+package: Beantragt
+dependencies:
+  - drupal:basic_auth
+  - drupal:datetime
+  - group:group
+  - beantragt_compute_api:beantragt_compute_api
+  - beantragt_roles_api:beantragt_roles_api
+  - beantragt_schema:beantragt_schema
+  - beantragt_workflow_status:beantragt_workflow_status

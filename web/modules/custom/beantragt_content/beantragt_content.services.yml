@@ -1,0 +1,5 @@
+services:
+  beantragt_content.public_content_cache_subscriber:
+    class: Drupal\beantragt_content\EventSubscriber\PublicContentCacheSubscriber
+    tags:
+      - { name: event_subscriber }

@@ -1,0 +1,4 @@
+administer beantragt notification templates:
+  title: 'Administer beantragt notification templates'
+  description: 'Configure notification email templates and enabled states.'
+  restrict access: true

@@ -1,0 +1,10 @@
+name: Beantragt Delivery
+type: module
+description: 'Outbound delivery outbox and gateway boundary for mock, webhook and FIT-Connect transports.'
+package: beantragt.ai
+core_version_requirement: ^11
+dependencies:
+  - beantragt_application:beantragt_application
+  - beantragt_group:beantragt_group
+  - beantragt_notification:beantragt_notification
+  - beantragt_workflow:beantragt_workflow

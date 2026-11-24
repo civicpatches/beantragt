@@ -1,0 +1,4 @@
+administer beantragt sso:
+  title: 'Administer beantragt SSO'
+  description: 'Configure SSO identity providers and service provider metadata.'
+  restrict access: true

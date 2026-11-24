@@ -1,0 +1,83 @@
+services:
+  logger.channel.beantragt_notification:
+    parent: logger.channel_base
+    arguments: ['beantragt_notification']
+
+  beantragt_notification.mail_logger_factory:
+    class: Drupal\beantragt_notification\MailFailureLoggerFactory
+    arguments: ['@logger.factory']
+
+  beantragt_notification.template_catalog:
+    class: Drupal\beantragt_notification\Service\NotificationTemplateCatalog
+    arguments:
+      - '@extension.list.module'
+
+  beantragt_notification.template_resolver:
+    class: Drupal\beantragt_notification\Service\NotificationTemplateResolver
+    arguments:
+      - '@beantragt_notification.template_catalog'
+      - '@beantragt_group.jurisdiction_config'
+      - '@config.factory'
+      - '@language_manager'
+      - '@language.config_factory_override'
+
+  beantragt_notification.sent_mail_collector:
+    class: Drupal\beantragt_notification\Service\NotificationOutcomeCollector
+
+  beantragt_notification.mail_branding:
+    class: Drupal\beantragt_notification\Service\TenantMailBranding
+    arguments:
+      - '@entity_type.manager'
+      - '@config.factory'
+      - '@logger.channel.beantragt_notification'
+
+  beantragt_notification.html_renderer:
+    class: Drupal\beantragt_notification\Service\TenantMailHtmlRenderer
+    arguments:
+      - '@renderer'
+
+  beantragt_notification.branded_mail_composer:
+    class: Drupal\beantragt_notification\Service\BrandedMailComposer
+    arguments:
+      - '@beantragt_notification.mail_branding'
+      - '@beantragt_notification.html_renderer'
+      - '@logger.channel.beantragt_notification'
+
+  beantragt_notification.mailer:
+    class: Drupal\beantragt_notification\Service\NotificationMailer
+    arguments:
+      - '@plugin.manager.mail'
+      - '@config.factory'
+      - '@entity_type.manager'
+      - '@logger.channel.beantragt_notification'
+      - '@language_manager'
+      - '@beantragt_application.data_protection'
+      - '@?beantragt_notification.template_resolver'
+      - '@current_user'
+      - '@?beantragt_notification.sent_mail_collector'
+
+  beantragt_notification.resubmission_resolver:
+    class: Drupal\beantragt_notification\Service\ResubmissionReminderResolver
+    arguments:
+      - '@config.factory'
+      - '@entity_type.manager'
+
+  beantragt_notification.subscriber:
+    class: Drupal\beantragt_notification\EventSubscriber\WorkflowNotificationSubscriber
+    arguments:
+      - '@beantragt_notification.mailer'
+      - '@config.factory'
+      - '@logger.channel.beantragt_notification'
+      - '@beantragt_application.citizen_status_projection'
+    tags:
+      - { name: event_subscriber }
+
+  beantragt_notification.reminder_schedule:
+    class: Drupal\beantragt_notification\Service\ReminderSchedule
+    arguments: ['@database', '@entity_type.manager', '@state', '@config.factory', '@beantragt_notification.resubmission_resolver', '@beantragt_notification.mailer', '@lock', '@datetime.time', '@logger.channel.beantragt_notification', '@beantragt_application.dependent_mutation_lock', '@keyvalue']
+
+  beantragt_notification.reminder_policy_subscriber:
+    class: Drupal\beantragt_notification\EventSubscriber\ReminderPolicySubscriber
+    arguments: ['@beantragt_notification.reminder_schedule']
+    tags:
+      - { name: event_subscriber }

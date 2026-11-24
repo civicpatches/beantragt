@@ -1,0 +1,151 @@
+<?php
+
+/**
+ * @file
+ * Install, schema and requirements of beantragt_docgen.
+ */
+
+declare(strict_types=1);
+
+use Drupal\beantragt_docgen\Exception\DocgenApiException;
+use Drupal\beantragt_docgen\Service\DocgenSettingsRepository;
+use Drupal\beantragt_docgen\Service\DocumentRepository;
+use Drupal\user\Entity\Role;
+
+/**
+ * Implements hook_schema().
+ */
+function beantragt_docgen_schema(): array {
+  return DocgenSettingsRepository::schema() + DocumentRepository::schema();
+}
+
+/**
+ * Implements hook_install().
+ */
+function beantragt_docgen_install(): void {
+  _beantragt_docgen_grant_role_permissions();
+}
+
+/**
+ * Grants the docgen permissions to the product's staff roles.
+ *
+ * Catalog administration to department admins; drafting and release to
+ * both staff roles, like the dispatch approval of transfers. A tenant can
+ * withdraw the release permission from case workers in the role settings.
+ */
+function _beantragt_docgen_grant_role_permissions(): void {
+  $grants = [
+    'department_admin' => ['administer docgen templates', 'create docgen documents', 'release docgen documents'],
+    'case_worker' => ['create docgen documents', 'release docgen documents'],
+  ];
+  foreach ($grants as $role_id => $permissions) {
+    $role = Role::load($role_id);
+    if ($role === NULL) {
+      continue;
+    }
+    $changed = FALSE;
+    foreach ($permissions as $permission) {
+      if (!$role->hasPermission($permission)) {
+        $role->grantPermission($permission);
+        $changed = TRUE;
+      }
+    }
+    if ($changed) {
+      $role->save();
+    }
+  }
+}
+
+/**
+ * Implements hook_requirements().
+ */
+function beantragt_docgen_requirements(string $phase): array {
+  if (in_array($phase, ['install', 'runtime'], TRUE) && !class_exists(\ZipArchive::class)) {
+    return [
+      'beantragt_docgen_zip' => [
+        'title' => t('Decision document structural validation'),
+        'value' => t('PHP ZIP extension missing'),
+        'description' => t('Install the PHP ZIP extension. DOCX uploads are refused without structural validation.'),
+        'severity' => REQUIREMENT_ERROR,
+      ],
+    ];
+  }
+  if ($phase !== 'runtime') {
+    return [];
+  }
+  $requirement = [
+    'title' => t('Decision documents (docgen)'),
+  ];
+  /** @var \Drupal\beantragt_docgen\Service\DocgenClient $client */
+  $client = \Drupal::service('beantragt_docgen.client');
+  if (!$client->isConfigured()) {
+    $requirement['value'] = t('Not configured');
+    $requirement['description'] = t('Set BEANTRAGT_DOCGEN_BASE_URL and the token (BEANTRAGT_DOCGEN_TOKEN or its secret file) to draft decisions from Word templates.');
+    $requirement['severity'] = REQUIREMENT_WARNING;
+    return ['beantragt_docgen' => $requirement];
+  }
+  // The live probe waits up to 15 seconds when docgen is down; the status
+  // report and drush core:requirements reuse its answer for a minute.
+  $cache = \Drupal::cache();
+  $cached = $cache->get('beantragt_docgen:requirements_health');
+  if ($cached !== FALSE && is_array($cached->data)) {
+    $health = $cached->data;
+  }
+  else {
+    try {
+      $health = $client->health();
+    }
+    catch (DocgenApiException) {
+      $health = ['status' => 'unreachable', 'gotenberg' => 'unknown', 'verapdf' => 'unknown'];
+    }
+    $cache->set('beantragt_docgen:requirements_health', $health, \Drupal::time()->getRequestTime() + 60);
+  }
+  $requirement['value'] = t('docgen @status (Gotenberg @gotenberg, veraPDF @verapdf)', [
+    '@status' => $health['status'],
+    '@gotenberg' => $health['gotenberg'],
+    '@verapdf' => $health['verapdf'],
+  ]);
+  $requirement['severity'] = $health['status'] === 'ok' ? REQUIREMENT_OK : REQUIREMENT_WARNING;
+  if ($health['status'] !== 'ok') {
+    $requirement['description'] = t('Drafts, previews and releases of decision documents fail until docgen, Gotenberg and veraPDF answer.');
+  }
+  return ['beantragt_docgen' => $requirement];
+}
+
+/**
+ * Adds the delivery offer to the form settings.
+ *
+ * Existing forms stay unconfigured: citizens are not asked and documents
+ * go to the citizen portal.
+ */
+function beantragt_docgen_update_10001(): string {
+  $schema = \Drupal::database()->schema();
+  if (!$schema->tableExists('beantragt_docgen_form')) {
+    return 'No docgen form settings table.';
+  }
+  foreach (DocgenSettingsRepository::deliveryFields() as $name => $definition) {
+    if (!$schema->fieldExists('beantragt_docgen_form', $name)) {
+      $schema->addField('beantragt_docgen_form', $name, $definition);
+    }
+  }
+  return 'Added the delivery offer to the form settings; existing forms stay unconfigured.';
+}
+
+/**
+ * Adds the render day and the cover sheet PDF to decision documents.
+ *
+ * Drafts from before the update count their deadline from their creation
+ * day; they get a cover sheet when they are rendered again.
+ */
+function beantragt_docgen_update_10002(): string {
+  $schema = \Drupal::database()->schema();
+  if (!$schema->tableExists('beantragt_docgen_document')) {
+    return 'No docgen document table.';
+  }
+  foreach (DocumentRepository::requestLetterFields() as $name => $definition) {
+    if (!$schema->fieldExists('beantragt_docgen_document', $name)) {
+      $schema->addField('beantragt_docgen_document', $name, $definition);
+    }
+  }
+  return 'Added the render day and the cover sheet PDF to decision documents.';
+}

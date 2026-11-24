@@ -1,0 +1,9 @@
+name: Beantragt Form Schema Group
+type: module
+description: 'Groups multiple form_schema entities into one application flow.'
+core_version_requirement: ^11
+package: Beantragt
+dependencies:
+  - beantragt_schema:beantragt_schema
+  - beantragt_group:beantragt_group
+  - beantragt_roles_api:beantragt_roles_api

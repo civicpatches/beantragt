@@ -1,0 +1,9 @@
+name: 'Beantragt Workflow'
+type: module
+description: 'Provides workflow routing, status transitions, assignment, and escalation for applications.'
+core_version_requirement: ^11
+package: Beantragt
+dependencies:
+  - beantragt_application:beantragt_application
+  - beantragt_group:beantragt_group
+  - beantragt_workflow_status:beantragt_workflow_status

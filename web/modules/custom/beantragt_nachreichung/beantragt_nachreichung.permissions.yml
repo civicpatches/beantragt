@@ -1,0 +1,4 @@
+revert nachreichung:
+  title: 'Remove or reassign follow-up documents'
+  description: 'Removes the documents of a receipt (Nachreichung) from the application, or sends the envelope back to the review.'
+  restrict access: true

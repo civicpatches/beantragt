@@ -1,0 +1,5 @@
+name: Beantragt Applicant Encryption Test
+type: module
+description: 'Provides controlled Field Encrypt hook behavior for kernel tests.'
+package: Testing
+core_version_requirement: ^10.3 || ^11

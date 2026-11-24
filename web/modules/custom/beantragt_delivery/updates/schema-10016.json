@@ -1,0 +1,39 @@
+{
+    "external_response_fields": {
+        "is_decision": {
+            "type": "int",
+            "size": "tiny",
+            "unsigned": true,
+            "not null": true,
+            "default": 0
+        },
+        "delivery_route": {
+            "type": "varchar_ascii",
+            "length": 16,
+            "not null": true,
+            "default": ""
+        },
+        "route_reason": {
+            "type": "varchar_ascii",
+            "length": 32,
+            "not null": false
+        },
+        "notification_sent_at": {
+            "type": "int",
+            "not null": false
+        },
+        "postal_due_at": {
+            "type": "int",
+            "not null": false
+        },
+        "postal_handed_over_at": {
+            "type": "int",
+            "not null": false
+        },
+        "postal_handed_over_by": {
+            "type": "int",
+            "unsigned": true,
+            "not null": false
+        }
+    }
+}

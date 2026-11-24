@@ -1,0 +1,19 @@
+# Hinweise zu beantragt.ai, Backend
+
+Die Civic Patches GmbH lizenziert den eigenen veröffentlichten Drupal-Code und das Rezept `recipes/beantragt_core/` unter GPL-2.0-or-later. Maßgeblich ist `LICENSE`.
+
+- Der mitgelieferte Dokumentendienst `services/docgen/` steht unter MIT. Der Originaltext mit Urhebervermerk liegt in `services/docgen/LICENSE`.
+- Ableitungen aus dem Mark-a-Spot-Drupal-Profil behalten anwendbare GPL-Hinweise und ursprüngliche Urheberangaben.
+- Separat veröffentlichte OpenAPI-v1-Beschreibungen stehen unter CC BY 4.0. Für separat bezogene FIM-Schemata gelten die Bedingungen des jeweiligen Herausgebers.
+- Bestandteile Dritter und ihre Lizenzzuordnung sind in `THIRD-PARTY-NOTICES.md` erfasst. Vorhandene Urheber- und Lizenzhinweise sind zu erhalten.
+
+## English translation (the German text above is authoritative)
+
+### Notices for the beantragt.ai backend
+
+Civic Patches GmbH licenses its published Drupal code and the `recipes/beantragt_core/` recipe under GPL-2.0-or-later. The terms in `LICENSE` apply.
+
+- The bundled document service in `services/docgen/` is licensed under MIT. The original text and copyright notice are in `services/docgen/LICENSE`.
+- Derivatives of the Mark-a-Spot Drupal profile retain applicable GPL notices and original copyright notices.
+- Separately published OpenAPI v1 descriptions are licensed under CC BY 4.0. The terms of the respective publisher apply to separately obtained FIM schemas.
+- Third-party components and their licenses are listed in `THIRD-PARTY-NOTICES.md`. Existing copyright and license notices are retained.

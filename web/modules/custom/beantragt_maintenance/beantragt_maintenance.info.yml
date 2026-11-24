@@ -1,0 +1,7 @@
+name: Beantragt Maintenance
+type: module
+description: 'Provides global platform maintenance status, administration, and break-glass recovery.'
+core_version_requirement: ^11
+package: Beantragt
+dependencies:
+  - beantragt_passwordless:beantragt_passwordless

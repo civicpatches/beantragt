@@ -1,0 +1,227 @@
+services:
+  logger.channel.beantragt_delivery:
+    parent: logger.channel_base
+    arguments: ['beantragt_delivery']
+
+  beantragt_delivery.log_repository:
+    class: Drupal\beantragt_delivery\Service\DeliveryLogRepository
+    arguments:
+      - '@database'
+      - '@uuid'
+      - '@datetime.time'
+      - '@logger.channel.beantragt_delivery'
+      - '@beantragt_delivery.transfer_audit_repository'
+
+  beantragt_delivery.envelope_builder:
+    class: Drupal\beantragt_delivery\Service\DeliveryEnvelopeBuilder
+    arguments:
+      - '@entity_type.manager'
+      - '@beantragt_delivery.transfer_attachment_selector'
+
+  beantragt_delivery.local_mock_receiver:
+    class: Drupal\beantragt_delivery\Service\LocalMockReceiver
+    arguments:
+      - '@state'
+      - '@datetime.time'
+
+  beantragt_delivery.policy_resolver:
+    class: Drupal\beantragt_delivery\Service\DeliveryPolicyResolver
+    arguments:
+      - '@logger.channel.beantragt_delivery'
+
+  beantragt_delivery.mock_gateway:
+    class: Drupal\beantragt_delivery\Gateway\MockDeliveryGateway
+    arguments:
+      - '@beantragt_delivery.local_mock_receiver'
+
+  beantragt_delivery.local_webhook_receiver:
+    class: Drupal\beantragt_delivery\Service\LocalWebhookReceiver
+    arguments:
+      - '@state'
+      - '@datetime.time'
+      - '@config.factory'
+
+  beantragt_delivery.webhook_gateway:
+    class: Drupal\beantragt_delivery\Gateway\WebhookDeliveryGateway
+    arguments:
+      - '@config.factory'
+      - '@http_client'
+      - '@datetime.time'
+
+  beantragt_delivery.fit_connect_http_client:
+    class: GuzzleHttp\ClientInterface
+    factory: ['Drupal\beantragt_delivery\Service\FitConnectHttpClientFactory', 'create']
+    arguments: ['@http_client_factory']
+
+  beantragt_delivery.fit_connect_access_token_client:
+    class: Drupal\beantragt_delivery\Service\FitConnectAccessTokenClient
+    arguments:
+      - '@beantragt_delivery.fit_connect_http_client'
+
+  beantragt_delivery.fit_connect_submission_metadata_builder:
+    class: Drupal\beantragt_delivery\Service\FitConnectSubmissionMetadataBuilder
+
+  beantragt_delivery.fit_connect_submission_api_client:
+    class: Drupal\beantragt_delivery\Service\FitConnectSubmissionApiClient
+    arguments: ['@beantragt_delivery.fit_connect_http_client']
+
+  beantragt_delivery.fit_connect_metadata_document_builder:
+    class: Drupal\beantragt_delivery\Service\FitConnectMetadataDocumentBuilder
+
+  beantragt_delivery.fit_connect_jwe_encrypter:
+    class: Drupal\beantragt_delivery\Service\FitConnectJweEncrypter
+
+  beantragt_delivery.fit_connect_gateway:
+    class: Drupal\beantragt_delivery\Gateway\FitConnectDeliveryGateway
+    arguments:
+      - '@config.factory'
+      - '@beantragt_delivery.fit_connect_access_token_client'
+      - '@beantragt_delivery.fit_connect_submission_metadata_builder'
+      - '@beantragt_delivery.fit_connect_submission_api_client'
+      - '@beantragt_delivery.fit_connect_metadata_document_builder'
+      - '@beantragt_delivery.fit_connect_jwe_encrypter'
+      - '@entity_type.manager'
+      - '@beantragt_delivery.log_repository'
+      - '@beantragt_application.data_protection'
+      - '@beantragt_delivery.fit_connect_case_repository'
+      - '@beantragt_delivery.transfer_planner'
+
+      - '@beantragt_delivery.transfer_attachment_selector'
+
+  beantragt_delivery.dispatcher:
+    class: Drupal\beantragt_delivery\Service\DeliveryDispatcher
+    arguments:
+      - '@entity_type.manager'
+      - '@queue'
+      - '@config.factory'
+      - '@beantragt_delivery.log_repository'
+      - '@beantragt_delivery.envelope_builder'
+      - '@beantragt_delivery.policy_resolver'
+      - '@beantragt_delivery.mock_gateway'
+      - '@beantragt_delivery.webhook_gateway'
+      - '@beantragt_delivery.fit_connect_gateway'
+      - '@logger.channel.beantragt_delivery'
+      - '@lock'
+      - '@beantragt_delivery.transfer_planner'
+      - '@?beantragt_workflow.semantic_status_changer'
+      - '@beantragt_delivery.integration_repository'
+
+  beantragt_delivery.external_response_repository:
+    class: Drupal\beantragt_delivery\Service\ExternalResponseRepository
+    arguments: ['@database']
+
+  beantragt_delivery.external_response_service:
+    class: Drupal\beantragt_delivery\Service\ExternalResponseService
+    arguments: ['@beantragt_delivery.external_response_repository', '@entity_type.manager', '@file_system', '@file.repository', '@beantragt_application.attachment_scanner', '@beantragt_application.dependent_mutation_lock', '@uuid', '@datetime.time', '@beantragt_notification.mailer', '@?beantragt_workflow.semantic_status_changer', '@?beantragt_application.data_protection', '@?beantragt_delivery.timeline_labels', '@?beantragt_delivery.postbox_transport', '@beantragt_application.confirmed_mailbox']
+
+  beantragt_delivery.postbox_transport:
+    class: Drupal\beantragt_delivery\Service\Postbox\NullPostboxTransport
+
+  beantragt_delivery.fit_connect_case_repository:
+    class: Drupal\beantragt_delivery\Service\FitConnectCaseRepository
+    arguments: ['@database']
+
+  beantragt_delivery.fit_connect_reply_api:
+    class: Drupal\beantragt_delivery\Service\FitConnectReplyApiClient
+    arguments: ['@beantragt_delivery.fit_connect_http_client']
+
+  beantragt_delivery.fit_connect_reply_verifier:
+    class: Drupal\beantragt_delivery\Service\FitConnectReplyVerifier
+
+  beantragt_delivery.fit_connect_reply_poller:
+    class: Drupal\beantragt_delivery\Service\FitConnectReplyPoller
+    arguments: ['@config.factory', '@beantragt_delivery.fit_connect_access_token_client', '@beantragt_delivery.fit_connect_reply_api', '@beantragt_delivery.fit_connect_reply_verifier', '@beantragt_delivery.fit_connect_case_repository', '@beantragt_delivery.external_response_service', '@entity_type.manager', '@beantragt_application.dependent_mutation_lock', '@lock', '@beantragt_delivery.log_repository', '@state', '@beantragt_delivery.credential_profiles', '@beantragt_delivery.integration_repository']
+
+  beantragt_delivery.scope_access:
+    class: Drupal\beantragt_delivery\Service\ScopeAccess
+    arguments: ['@entity_type.manager']
+
+  beantragt_delivery.credential_profiles:
+    class: Drupal\beantragt_delivery\Service\IntegrationCredentialProfiles
+    arguments: ['@config.factory']
+
+  beantragt_delivery.contract_registry:
+    class: Drupal\beantragt_delivery\Service\DataContractRegistry
+    arguments: ['@module_handler', null, '%app.root%/modules/custom/beantragt_delivery/contracts']
+
+  beantragt_delivery.contract_validator:
+    class: Drupal\beantragt_delivery\Service\DataContractValidator
+    arguments: ['@beantragt_delivery.contract_registry', '@logger.channel.beantragt_delivery']
+
+  beantragt_delivery.integration_rules:
+    class: Drupal\beantragt_delivery\Service\IntegrationRules
+    arguments: ['@beantragt_delivery.contract_registry']
+
+  beantragt_delivery.integration_repository:
+    class: Drupal\beantragt_delivery\Service\IntegrationRepository
+    arguments: ['@database', '@uuid', '@datetime.time', '@entity_type.manager', '@beantragt_delivery.scope_access', '@beantragt_delivery.credential_profiles', '@beantragt_delivery.contract_registry', '@beantragt_delivery.integration_rules', '@beantragt_delivery.revision_coverage', '@beantragt_application.effective_workflow_resolver']
+
+  beantragt_delivery.integration_exception_subscriber:
+    class: Drupal\beantragt_delivery\EventSubscriber\IntegrationExceptionSubscriber
+    arguments: ['@beantragt_delivery.integration_audit']
+    tags:
+      - { name: event_subscriber }
+
+  logger.channel.beantragt_integration_audit:
+    parent: logger.channel_base
+    arguments: ['beantragt_integration_audit']
+
+  beantragt_delivery.integration_audit:
+    class: Drupal\beantragt_delivery\Service\IntegrationAudit
+    arguments: ['@logger.channel.beantragt_integration_audit', '@datetime.time', '@current_user', '@database', '@beantragt_delivery.transfer_audit_repository']
+
+  beantragt_delivery.integration_form_catalog:
+    class: Drupal\beantragt_delivery\Service\IntegrationFormCatalog
+    arguments: ['@entity_type.manager', '@database', '@beantragt_delivery.scope_access', '@current_user']
+
+  beantragt_delivery.mapped_payload_builder:
+    class: Drupal\beantragt_delivery\Service\MappedPayloadBuilder
+    arguments: ['@beantragt_delivery.contract_registry', '@beantragt_delivery.integration_rules', '@beantragt_delivery.contract_validator', '@beantragt_application.form_value_parser']
+
+  beantragt_delivery.transfer_payload_repository:
+    class: Drupal\beantragt_delivery\Service\TransferPayloadRepository
+    arguments: ['@database', '@beantragt_application.data_protection', '@uuid', '@datetime.time', '@beantragt_delivery.application_purger']
+
+  beantragt_delivery.application_purger:
+    class: Drupal\beantragt_delivery\Service\ApplicationDeliveryPurger
+    arguments: ['@database', '@entity_type.manager', '@beantragt_delivery.external_response_service', '@beantragt_delivery.log_repository', '@datetime.time', '@state']
+
+  beantragt_delivery.transfer_planner:
+    class: Drupal\beantragt_delivery\Service\TransferPlanner
+    arguments: ['@database', '@entity_type.manager', '@beantragt_delivery.scope_access', '@beantragt_delivery.integration_repository', '@beantragt_delivery.credential_profiles', '@beantragt_delivery.contract_registry', '@beantragt_delivery.mapped_payload_builder', '@beantragt_application.data_protection', '@beantragt_delivery.transfer_payload_repository', '@beantragt_delivery.log_repository', '@beantragt_delivery.envelope_builder', '@queue', '@lock', '@datetime.time', '@config.factory', '@beantragt_delivery.revision_coverage', '@beantragt_delivery.transfer_gates', '@logger.channel.beantragt_delivery', '@beantragt_application.effective_workflow_resolver']
+
+  beantragt_delivery.revision_coverage:
+    class: Drupal\beantragt_delivery\Service\FormRevisionCoverage
+    arguments: ['@entity_type.manager']
+
+  beantragt_delivery.history_projection:
+    class: Drupal\beantragt_delivery\Service\TransferHistoryProjection
+    arguments: ['@beantragt_delivery.scope_access']
+
+  beantragt_delivery.transfer_attachment_selector:
+    class: Drupal\beantragt_delivery\Service\TransferAttachmentSelector
+    arguments: ['@entity_type.manager', '@beantragt_application.data_protection']
+
+  beantragt_delivery.planning_recovery:
+    class: Drupal\beantragt_delivery\Service\TransferPlanningRecovery
+    arguments: ['@database', '@entity_type.manager', '@beantragt_delivery.scope_access', '@beantragt_delivery.transfer_planner', '@datetime.time', '@config.factory']
+
+  beantragt_delivery.status_trigger_subscriber:
+    class: Drupal\beantragt_delivery\EventSubscriber\StatusTriggerSubscriber
+    arguments: ['@config.factory', '@beantragt_delivery.transfer_planner', '@logger.channel.beantragt_delivery', '@beantragt_delivery.planning_recovery']
+    tags:
+      - { name: event_subscriber }
+
+  beantragt_delivery.transfer_audit_repository:
+    class: Drupal\beantragt_delivery\Service\TransferAuditRepository
+    arguments: ['@database']
+
+  beantragt_delivery.timeline_labels:
+    class: Drupal\beantragt_delivery\Service\TimelineLabels
+    arguments: ['@database', '@entity_type.manager', '@language_manager']
+
+  beantragt_delivery.transfer_gates:
+    class: Drupal\beantragt_delivery\Service\TransferGates
+    arguments: ['@logger.channel.beantragt_delivery']
+    tags:
+      - { name: service_collector, tag: beantragt_delivery_transfer_gate, call: addGate }

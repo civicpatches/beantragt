@@ -1,0 +1,1534 @@
+<?php
+
+/**
+ * @file
+ * Install and update hooks for beantragt_notification.
+ */
+
+declare(strict_types=1);
+
+use Drupal\Core\Config\StorableConfigBase;
+use Drupal\user\Entity\Role;
+use Drupal\language\Entity\ConfigurableLanguage;
+use Drupal\Core\Extension\ModuleHandlerInterface;
+use Drupal\Core\Extension\Requirement\RequirementSeverity;
+use Drupal\Core\StringTranslation\TranslatableMarkup;
+use Drupal\group\Entity\GroupInterface;
+
+/**
+ * Implements hook_requirements().
+ */
+function beantragt_notification_requirements(string $phase): array {
+  if ($phase !== 'runtime') {
+    return [];
+  }
+
+  $requirements = [];
+  $failures = _beantragt_notification_comment_mail_hook_failures(
+    \Drupal::moduleHandler(),
+  );
+
+  if ($failures === []) {
+    $requirements['beantragt_notification_comment_mail_hook'] = [
+      'title' => new TranslatableMarkup('beantragt.ai comment notifications'),
+      'value' => new TranslatableMarkup('Hook cache registered'),
+      'description' => new TranslatableMarkup(
+        'The application_comment_insert hook and notification mail hook are registered. Staff and citizen comment mails can be dispatched from application_comment entity inserts.',
+      ),
+      'severity' => RequirementSeverity::OK,
+    ];
+  }
+  else {
+    $requirements['beantragt_notification_comment_mail_hook'] = [
+      'title' => new TranslatableMarkup('beantragt.ai comment notifications'),
+      'value' => new TranslatableMarkup('Hook cache missing implementation'),
+      'description' => new TranslatableMarkup(
+        'Comment notification hooks are not fully registered: @failures. Run drush cr or the deployment cache rebuild before accepting comment-mail smoke as valid.',
+        ['@failures' => implode('; ', $failures)],
+      ),
+      'severity' => RequirementSeverity::Error,
+    ];
+  }
+
+  $coverage = _beantragt_notification_jurisdiction_mail_template_coverage();
+  if ($coverage['inspection_error'] !== NULL) {
+    $requirements['beantragt_notification_jurisdiction_mail_templates'] = [
+      'title' => new TranslatableMarkup('beantragt.ai jurisdiction notification templates'),
+      'value' => new TranslatableMarkup('Health check unavailable'),
+      'description' => new TranslatableMarkup(
+        'Unable to inspect per-jurisdiction notification_mail templates: @reason. Mail can still fall back to site defaults, but deploy drift may be hidden until this check can run.',
+        ['@reason' => $coverage['inspection_error']],
+      ),
+      'severity' => RequirementSeverity::Warning,
+    ];
+    return $requirements;
+  }
+
+  if ($coverage['affected'] === []) {
+    $requirements['beantragt_notification_jurisdiction_mail_templates'] = [
+      'title' => new TranslatableMarkup('beantragt.ai jurisdiction notification templates'),
+      'value' => new TranslatableMarkup('@count jurisdiction(s) covered', ['@count' => $coverage['total']]),
+      'description' => new TranslatableMarkup(
+        'Every jurisdiction has a notification_mail.templates block including the locked application_confirmation_request template.',
+      ),
+      'severity' => RequirementSeverity::OK,
+    ];
+    return $requirements;
+  }
+
+  $requirements['beantragt_notification_jurisdiction_mail_templates'] = [
+    'title' => new TranslatableMarkup('beantragt.ai jurisdiction notification templates'),
+    'value' => new TranslatableMarkup('@count jurisdiction(s) incomplete', ['@count' => count($coverage['affected'])]),
+    'description' => new TranslatableMarkup(
+      'The following jurisdictions do not have a notification_mail.templates block including application_confirmation_request: @jurisdictions. Mail can still fall back to site defaults, but this masks deploy drift and should be repaired.',
+      ['@jurisdictions' => _beantragt_notification_format_jurisdiction_sample($coverage['affected'])],
+    ),
+    'severity' => RequirementSeverity::Warning,
+  ];
+
+  return $requirements;
+}
+
+/**
+ * Returns diagnostic failures for the comment notification hook chain.
+ *
+ * @return list<string>
+ *   Human-readable failure labels for the runtime requirements report.
+ */
+function _beantragt_notification_comment_mail_hook_failures(ModuleHandlerInterface $module_handler): array {
+  $failures = [];
+
+  if (!$module_handler->moduleExists('beantragt_comment')) {
+    $failures[] = 'beantragt_comment module is disabled';
+  }
+  elseif (!$module_handler->hasImplementations('application_comment_insert', 'beantragt_comment')) {
+    $failures[] = 'beantragt_comment_application_comment_insert() is not registered';
+  }
+
+  if (!$module_handler->moduleExists('beantragt_notification')) {
+    $failures[] = 'beantragt_notification module is disabled';
+  }
+  elseif (!$module_handler->hasImplementations('mail', 'beantragt_notification')) {
+    $failures[] = 'beantragt_notification_mail() is not registered';
+  }
+
+  return $failures;
+}
+
+/**
+ * Checks per-jurisdiction notification template coverage.
+ *
+ * @return array{total: int, affected: list<string>, inspection_error: string|null}
+ *   Runtime coverage status.
+ */
+function _beantragt_notification_jurisdiction_mail_template_coverage(): array {
+  try {
+    if (!\Drupal::hasService('entity_type.manager')) {
+      return [
+        'total' => 0,
+        'affected' => [],
+        'inspection_error' => 'the entity_type.manager service is unavailable',
+      ];
+    }
+    if (!\Drupal::hasService('beantragt_group.jurisdiction_config')) {
+      return [
+        'total' => 0,
+        'affected' => [],
+        'inspection_error' => 'the beantragt_group.jurisdiction_config service is unavailable',
+      ];
+    }
+
+    $group_storage = \Drupal::entityTypeManager()->getStorage('group');
+    $config_service = \Drupal::service('beantragt_group.jurisdiction_config');
+
+    $groups = $group_storage->loadByProperties(['type' => 'jur']);
+    $total = 0;
+    $affected = [];
+
+    foreach ($groups as $group) {
+      if (!$group instanceof GroupInterface) {
+        continue;
+      }
+
+      $total++;
+      $section = $config_service->getSection($group, 'notification_mail');
+      $templates = $section['templates'] ?? NULL;
+      if (!is_array($templates) || !is_array($templates['application_confirmation_request'] ?? NULL)) {
+        $affected[] = _beantragt_notification_jurisdiction_label($group);
+      }
+    }
+
+    return [
+      'total' => $total,
+      'affected' => $affected,
+      'inspection_error' => NULL,
+    ];
+  }
+  catch (\Throwable $e) {
+    return [
+      'total' => 0,
+      'affected' => [],
+      'inspection_error' => $e->getMessage(),
+    ];
+  }
+}
+
+/**
+ * Returns a readable jurisdiction label for status reports.
+ */
+function _beantragt_notification_jurisdiction_label(GroupInterface $group): string {
+  $label = trim((string) $group->label());
+  if ($label === '') {
+    $label = 'Jurisdiction ' . $group->id();
+  }
+
+  $slug = '';
+  if ($group->hasField('field_slug') && !$group->get('field_slug')->isEmpty()) {
+    $slug = trim($group->get('field_slug')->getString());
+  }
+
+  return $slug === '' ? $label : sprintf('%s (%s)', $label, $slug);
+}
+
+/**
+ * Formats a capped jurisdiction sample for the requirements description.
+ *
+ * @param list<string> $jurisdictions
+ *   Affected jurisdiction labels.
+ */
+function _beantragt_notification_format_jurisdiction_sample(array $jurisdictions): string {
+  $limit = 10;
+  $sample = array_slice($jurisdictions, 0, $limit);
+  $remaining = count($jurisdictions) - count($sample);
+  if ($remaining > 0) {
+    $sample[] = '+' . $remaining . ' more';
+  }
+
+  return implode(', ', $sample);
+}
+
+/**
+ * Returns safe defaults for comment notification templates.
+ *
+ * Comment text and attachments stay in the authenticated case thread. Email
+ * notifications only announce that a message is waiting.
+ *
+ * @return array<string, array{subject: string, body: string}>
+ *   Template defaults keyed by notification template id.
+ */
+function _beantragt_notification_comment_mail_templates(): array {
+  return [
+    'application_comment_staff' => [
+      'subject' => 'Rückfrage zu Ihrem Antrag @reference_number',
+      'body' => "Guten Tag @full_name,\n\n"
+      . "zu Ihrem Antrag \"@form_title\" (Aktenzeichen: @reference_number) "
+      . "liegt eine Rückfrage vor.\n\n"
+      . "Bitte loggen Sie sich ein, um die Rückfrage im geschützten "
+      . "Bereich zu lesen und zu beantworten.\n"
+      . "Antrag ansehen: @citizen_application_url\n\n"
+      . "@org_name",
+    ],
+    'application_comment_citizen' => [
+      'subject' => 'Antwort vom Bürger zu Antrag @reference_number',
+      'body' => "Zu Antrag \"@form_title\" (Aktenzeichen: @reference_number) "
+      . "ist eine Antwort eingegangen.\n\n"
+      . "Bitte prüfen Sie die Antwort zeitnah im geschützten "
+      . "Verwaltungsbereich.\n"
+      . "Antrag öffnen: @admin_application_url",
+    ],
+  ];
+}
+
+/**
+ * Returns safe defaults for double opt-in notification templates.
+ *
+ * @return array<string, array{subject: string, body: string}>
+ *   Template defaults keyed by notification template id.
+ */
+function _beantragt_notification_confirmation_request_mail_templates(): array {
+  return [
+    'application_confirmation_request' => [
+      'subject' => 'Bitte bestätigen Sie Ihre E-Mail-Adresse',
+      'body' => "Guten Tag,\n\n"
+      . "bitte bestätigen Sie Ihre E-Mail-Adresse, damit Ihre Einreichung "
+      . "verarbeitet werden kann.\n\n"
+      . "E-Mail-Adresse bestätigen: @confirmation_url\n\n"
+      . "Wenn Sie diesen Antrag nicht gestellt haben, können Sie diese "
+      . "Nachricht ignorieren.",
+    ],
+  ];
+}
+
+/**
+ * Returns safe defaults for assignment notification templates.
+ *
+ * @return array<string, array{subject: string, body: string}>
+ *   Template defaults keyed by notification template id.
+ */
+function _beantragt_notification_assignment_mail_templates(): array {
+  return [
+    'assignment_alert' => [
+      'subject' => 'Antrag zugewiesen: @reference_number',
+      'body' => "Ihnen oder Ihrem Team wurde ein Antrag zugewiesen.\n\n"
+      . "Formular: @form_title\n"
+      . "Aktenzeichen: @reference_number\n"
+      . "Zugewiesen an: @assigned_to@assigned_team\n"
+      . "Antrag öffnen: @admin_application_url\n\n"
+      . "Bitte prüfen Sie den Vorgang zeitnah.",
+    ],
+  ];
+}
+
+/**
+ * Returns safe defaults for delegation notification templates.
+ *
+ * @return array<string, array{subject: string, body: string}>
+ *   Template defaults keyed by notification template id.
+ */
+function _beantragt_notification_delegation_mail_templates(): array {
+  return [
+    'delegation_alert' => [
+      'subject' => 'Delegation: Antrag @reference_number',
+      'body' => "Ein Antrag wurde an Ihre Organisation delegiert.\n\n"
+      . "Aktenzeichen: @reference_number\n"
+      . "Von: @source_org\n"
+      . "An: @target_org\n"
+      . "Interner Hinweis: @note\n"
+      . "Antrag öffnen: @admin_application_url\n\n"
+      . "Bitte prüfen Sie die neue Zuständigkeit zeitnah.",
+    ],
+  ];
+}
+
+/**
+ * Returns safe defaults for deadline reminder notification templates.
+ *
+ * @return array<string, array{subject: string, body: string}>
+ *   Template defaults keyed by notification template id.
+ */
+function _beantragt_notification_deadline_mail_templates(): array {
+  return [
+    'deadline_alert' => [
+      'subject' => 'Wiedervorlage fällig: Antrag @reference_number',
+      'body' => "Der folgende Antrag ist fällig oder überfällig und "
+      . "erfordert Ihre Aufmerksamkeit.\n\n"
+      . "Formular: @form_title\n"
+      . "Aktenzeichen: @reference_number\n"
+      . "Frist: @due_date\n"
+      . "Aktueller Status: @new_status\n"
+      . "Zugewiesen an: @assigned_to@assigned_team\n"
+      . "Antrag öffnen: @admin_application_url\n\n"
+      . "Bitte prüfen Sie diesen Vorgang zeitnah.",
+    ],
+  ];
+}
+
+/**
+ * Returns safe defaults for resubmission reminder notification templates.
+ *
+ * @return array<string, array{subject: string, body: string}>
+ *   Template defaults keyed by notification template id.
+ */
+function _beantragt_notification_resubmission_mail_templates(): array {
+  return [
+    'resubmission_reminder' => [
+      'subject' => 'Wiedervorlage: Antrag @reference_number seit @days_idle Tagen ohne Änderung',
+      'body' => "Der folgende Antrag ist seit @days_idle Tagen ohne Änderung "
+      . "und wurde bereits @reminder_count Mal zur Wiedervorlage erinnert.\n\n"
+      . "Antragsart: @form_title\n"
+      . "Aktenzeichen: @reference_number\n\n"
+      . "Bitte prüfen Sie, ob der Vorgang weiterbearbeitet werden muss.",
+    ],
+  ];
+}
+
+/**
+ * Returns English notification templates for language config overrides.
+ *
+ * @return array<string, array{subject: string, body: string}>
+ *   Template defaults keyed by notification template id.
+ */
+function _beantragt_notification_english_mail_templates(): array {
+  return [
+    'external_response_available' => [
+      'subject' => 'A new document for your application @reference_number',
+      'body' => "A new document for your application is available in the citizen portal.\n\nPlease sign in to access it:\n@citizen_application_url",
+    ],
+    'application_confirmation_request' => [
+      'subject' => 'Please confirm your email address',
+      'body' => "Hello,\n\n"
+      . "please confirm your email address so your submission can be "
+      . "processed.\n\n"
+      . "Confirm email address: @confirmation_url\n\n"
+      . "If you did not submit this application, you can ignore this message.",
+    ],
+    'application_confirmation' => [
+      'subject' => 'Confirmation of receipt: your application @reference_number',
+      'body' => "Hello @full_name,\n\n"
+      . "thank you for your application \"@form_title\".\n\n"
+      . "Your reference number is: @reference_number\n"
+      . "Submission date: @application_date\n"
+      . "View application: @citizen_application_url\n\n"
+      . "We will process your application as soon as possible. Please quote "
+      . "your reference number if you contact us.\n\n"
+      . "@org_name",
+    ],
+    'status_change' => [
+      'subject' => 'Status update for your application @reference_number',
+      'body' => "Hello @full_name,\n\n"
+      . "the status of your application \"@form_title\" (reference: "
+      . "@reference_number) has changed.\n\n"
+      . "Previous status: @old_status\n"
+      . "New status: @new_status\n"
+      . "View application: @citizen_application_url\n\n"
+      . "Please contact the responsible office if you have any questions.\n\n"
+      . "@org_name",
+    ],
+    'approval' => [
+      'subject' => 'Your application @reference_number was approved',
+      'body' => "Hello @full_name,\n\n"
+      . "your application \"@form_title\" (reference: @reference_number) "
+      . "was approved.\n"
+      . "View application: @citizen_application_url\n\n"
+      . "If further steps are required, we will inform you separately.\n\n"
+      . "@org_name",
+    ],
+    'rejection' => [
+      'subject' => 'Your application @reference_number was rejected',
+      'body' => "Hello @full_name,\n\n"
+      . "your application \"@form_title\" (reference: @reference_number) "
+      . "was rejected.\n\n"
+      . "Reason: @rejection_reason\n"
+      . "View application: @citizen_application_url\n\n"
+      . "Please contact the responsible office if you have questions about "
+      . "this decision.\n\n"
+      . "@org_name",
+    ],
+    'new_application_alert' => [
+      'subject' => 'New application received: @reference_number',
+      'body' => "A new application has been received.\n\n"
+      . "Form: @form_title\n"
+      . "Reference number: @reference_number\n"
+      . "Submission date: @application_date\n"
+      . "Applicant: @full_name\n"
+      . "Open application: @admin_application_url\n\n"
+      . "Please review the application promptly.",
+    ],
+    'assignment_alert' => [
+      'subject' => 'Application assigned: @reference_number',
+      'body' => "An application has been assigned to you or your team.\n\n"
+      . "Form: @form_title\n"
+      . "Reference number: @reference_number\n"
+      . "Assigned to: @assigned_to@assigned_team\n"
+      . "Open application: @admin_application_url\n\n"
+      . "Please review this case promptly.",
+    ],
+    'delegation_alert' => [
+      'subject' => 'Delegation: application @reference_number',
+      'body' => "An application has been delegated to your organisation.\n\n"
+      . "Reference number: @reference_number\n"
+      . "From: @source_org\n"
+      . "To: @target_org\n"
+      . "Internal note: @note\n"
+      . "Open application: @admin_application_url\n\n"
+      . "Please review the new responsibility promptly.",
+    ],
+    'escalation_alert' => [
+      'subject' => 'Escalation: application @reference_number has been pending for @escalation_days days',
+      'body' => "The following application has been pending for "
+      . "@escalation_days days and requires your attention.\n\n"
+      . "Form: @form_title\n"
+      . "Reference number: @reference_number\n"
+      . "Current status: @new_status\n"
+      . "Assigned to: @assigned_to\n"
+      . "Open application: @admin_application_url\n\n"
+      . "Please process this case promptly.",
+    ],
+    'deadline_alert' => [
+      'subject' => 'Follow-up due: application @reference_number',
+      'body' => "The following application is due or overdue and requires "
+      . "your attention.\n\n"
+      . "Form: @form_title\n"
+      . "Reference number: @reference_number\n"
+      . "Due date: @due_date\n"
+      . "Current status: @new_status\n"
+      . "Assigned to: @assigned_to@assigned_team\n"
+      . "Open application: @admin_application_url\n\n"
+      . "Please review this case promptly.",
+    ],
+    'resubmission_reminder' => [
+      'subject' => 'Resubmission reminder: application @reference_number unchanged for @days_idle days',
+      'body' => "The following application has not changed for @days_idle "
+      . "days and has already been reminded @reminder_count time(s).\n\n"
+      . "Application type: @form_title\n"
+      . "Reference number: @reference_number\n\n"
+      . "Please check whether this case needs further processing.",
+    ],
+    'application_comment_staff' => [
+      'subject' => 'Question about your application @reference_number',
+      'body' => "Hello @full_name,\n\n"
+      . "there is a question about your application \"@form_title\" "
+      . "(reference: @reference_number).\n\n"
+      . "Please sign in to read and answer the question in the protected area.\n"
+      . "View application: @citizen_application_url\n\n"
+      . "@org_name",
+    ],
+    'application_comment_citizen' => [
+      'subject' => 'Citizen reply for application @reference_number',
+      'body' => "A reply has been received for application \"@form_title\" "
+      . "(reference: @reference_number).\n\n"
+      . "Please review the reply promptly in the protected administration area.\n"
+      . "Open application: @admin_application_url",
+    ],
+  ];
+}
+
+/**
+ * Implements hook_install().
+ */
+function beantragt_notification_install(): void {
+  _beantragt_notification_ensure_platform_languages();
+  _beantragt_notification_write_english_mail_templates();
+}
+
+/**
+ * Ensures Drupal's Language module is installed for translated mail config.
+ */
+function _beantragt_notification_ensure_language_module(): bool {
+  if (\Drupal::moduleHandler()->moduleExists('language')) {
+    return FALSE;
+  }
+
+  /** @var \Drupal\Core\Extension\ModuleInstallerInterface $module_installer */
+  $module_installer = \Drupal::service('module_installer');
+  return $module_installer->install(['language'], TRUE);
+}
+
+/**
+ * Ensures the platform default stays German while English is available.
+ */
+function _beantragt_notification_ensure_platform_languages(): bool {
+  _beantragt_notification_ensure_language_module();
+
+  if (!\Drupal::moduleHandler()->moduleExists('language')) {
+    return FALSE;
+  }
+
+  if (!class_exists('\Drupal\language\Entity\ConfigurableLanguage')) {
+    return FALSE;
+  }
+
+  $changed = FALSE;
+  $language_manager = \Drupal::languageManager();
+
+  foreach (['de', 'en'] as $langcode) {
+    if ($language_manager->getLanguage($langcode) === NULL) {
+      ConfigurableLanguage::createFromLangcode($langcode)->save();
+      $changed = TRUE;
+      $language_manager->reset();
+    }
+  }
+
+  $site_config = \Drupal::configFactory()->getEditable('system.site');
+  if ($site_config->get('default_langcode') !== 'de') {
+    $site_config->set('default_langcode', 'de')->save();
+    $language_manager->reset();
+    $changed = TRUE;
+  }
+
+  return $changed;
+}
+
+/**
+ * Writes English notification template overrides when Language is available.
+ */
+function _beantragt_notification_write_english_mail_templates(): array {
+  if (!\Drupal::moduleHandler()->moduleExists('language')) {
+    return [];
+  }
+
+  if (!\Drupal::hasService('language.config_factory_override')) {
+    \Drupal::service('kernel')->rebuildContainer();
+  }
+
+  if (!\Drupal::hasService('language.config_factory_override')) {
+    return [];
+  }
+
+  /** @var \Drupal\language\Config\LanguageConfigFactoryOverrideInterface $language_config_override */
+  $language_config_override = \Drupal::service('language.config_factory_override');
+  $override = $language_config_override->getOverride('en', 'beantragt_notification.mail');
+  $updated = [];
+
+  foreach (_beantragt_notification_english_mail_templates() as $key => $template) {
+    $current = $override->get($key);
+    $next = is_array($current) ? $current : [];
+    $changed = FALSE;
+
+    foreach (['subject', 'body'] as $field) {
+      if (trim((string) ($next[$field] ?? '')) === '') {
+        $next[$field] = $template[$field];
+        $changed = TRUE;
+      }
+    }
+
+    if ($changed) {
+      $override->set($key, $next);
+      $updated[] = $key;
+    }
+  }
+
+  if ($updated !== []) {
+    $override->save();
+  }
+
+  return $updated;
+}
+
+/**
+ * Grants notification template management to the legacy tenant admin role.
+ */
+function _beantragt_notification_grant_template_permissions(): bool {
+  $available_permissions = array_keys(\Drupal::service('user.permissions')->getPermissions());
+  $permission = 'administer beantragt notification templates';
+  if (!in_array($permission, $available_permissions, TRUE)) {
+    return FALSE;
+  }
+
+  $changed = FALSE;
+  $role = Role::load('department_admin');
+  if ($role && !$role->hasPermission($permission)) {
+    $role->grantPermission($permission);
+    $role->save();
+    $changed = TRUE;
+  }
+
+  return $changed;
+}
+
+/**
+ * Revokes global notification template management from Department Admin.
+ */
+function _beantragt_notification_revoke_template_permissions_from_department_admin(): bool {
+  $permission = 'administer beantragt notification templates';
+  $role = Role::load('department_admin');
+  if (!$role || !$role->hasPermission($permission)) {
+    return FALSE;
+  }
+
+  $role->revokePermission($permission);
+  $role->save();
+  return TRUE;
+}
+
+/**
+ * Returns the default application link line per notification template.
+ *
+ * @return array<string, string>
+ *   Link lines keyed by notification template id.
+ */
+function _beantragt_notification_application_link_lines(): array {
+  return [
+    'application_confirmation_request' => 'Antrag bestätigen: @confirmation_url',
+    'application_confirmation' => 'Antrag ansehen: @citizen_application_url',
+    'status_change' => 'Antrag ansehen: @citizen_application_url',
+    'approval' => 'Antrag ansehen: @citizen_application_url',
+    'rejection' => 'Antrag ansehen: @citizen_application_url',
+    'application_comment_staff' => 'Antrag ansehen: @citizen_application_url',
+    'new_application_alert' => 'Antrag öffnen: @admin_application_url',
+    'assignment_alert' => 'Antrag öffnen: @admin_application_url',
+    'delegation_alert' => 'Antrag öffnen: @admin_application_url',
+    'escalation_alert' => 'Antrag öffnen: @admin_application_url',
+    'deadline_alert' => 'Antrag öffnen: @admin_application_url',
+    'application_comment_citizen' => 'Antrag öffnen: @admin_application_url',
+  ];
+}
+
+/**
+ * Adds missing application link lines to one mail config object.
+ *
+ * @param \Drupal\Core\Config\StorableConfigBase $config
+ *   Editable config or language override object.
+ * @param bool $create_missing
+ *   Whether missing template keys should be created.
+ *
+ * @return string[]
+ *   Template ids updated in this config object.
+ */
+function _beantragt_notification_add_application_links_to_mail_config(
+  StorableConfigBase $config,
+  bool $create_missing = FALSE,
+): array {
+  $updated = [];
+
+  foreach (_beantragt_notification_application_link_lines() as $key => $line) {
+    $template = $config->get($key);
+    if (!is_array($template) || empty($template['body'])) {
+      if ($create_missing) {
+        $defaults = \Drupal::config('beantragt_notification.mail')->get($key);
+        if (is_array($defaults) && !empty($defaults['body'])) {
+          $config->set($key, $defaults);
+          $updated[] = $key;
+        }
+      }
+      continue;
+    }
+
+    $body = (string) $template['body'];
+    if (str_contains($body, '@citizen_application_url') || str_contains($body, '@admin_application_url')) {
+      continue;
+    }
+
+    $config->set($key . '.body', rtrim($body) . "\n" . $line);
+    $updated[] = $key;
+  }
+
+  if ($updated !== []) {
+    $config->save();
+  }
+
+  return $updated;
+}
+
+/**
+ * Checks whether a template can expose private comment contents.
+ */
+function _beantragt_notification_comment_template_contains_private_tokens(mixed $template): bool {
+  if (!is_array($template)) {
+    return FALSE;
+  }
+
+  $subject = (string) ($template['subject'] ?? '');
+  $body = (string) ($template['body'] ?? '');
+  $combined = strtolower($subject . "\n" . $body);
+
+  foreach (['@comment_body', '@comment_text', '@attachments', '@attachment_links'] as $token) {
+    if (str_contains($combined, $token)) {
+      return TRUE;
+    }
+  }
+
+  return FALSE;
+}
+
+/**
+ * Adds missing safe comment notification templates.
+ */
+function beantragt_notification_update_10001(): string {
+  $mail_config = \Drupal::configFactory()->getEditable('beantragt_notification.mail');
+  $settings_config = \Drupal::configFactory()->getEditable('beantragt_notification.settings');
+  $updated = [];
+
+  foreach (_beantragt_notification_comment_mail_templates() as $key => $template) {
+    $current = $mail_config->get($key);
+    if (
+      !is_array($current)
+      || empty($current['subject'])
+      || empty($current['body'])
+      || _beantragt_notification_comment_template_contains_private_tokens($current)
+    ) {
+      $mail_config->set($key, $template);
+      $settings_config->set("enabled_templates.$key", TRUE);
+      $updated[] = $key;
+    }
+  }
+
+  if ($updated !== []) {
+    $mail_config->save();
+    $settings_config->save();
+  }
+
+  return 'Added safe comment notification templates: '
+    . ($updated === [] ? 'none' : implode(', ', $updated));
+}
+
+/**
+ * Adds application detail links to existing notification templates.
+ */
+function beantragt_notification_update_10002(): string {
+  $mail_config = \Drupal::configFactory()->getEditable('beantragt_notification.mail');
+  $updated = _beantragt_notification_add_application_links_to_mail_config($mail_config, TRUE);
+
+  if (\Drupal::moduleHandler()->moduleExists('language')) {
+    /** @var \Drupal\language\Config\LanguageConfigFactoryOverrideInterface $language_config_override */
+    $language_config_override = \Drupal::service('language.config_factory_override');
+    foreach (array_keys(\Drupal::languageManager()->getLanguages()) as $langcode) {
+      $override = $language_config_override->getOverride(
+        $langcode,
+        'beantragt_notification.mail',
+      );
+      $override_updated = _beantragt_notification_add_application_links_to_mail_config($override);
+
+      foreach ($override_updated as $key) {
+        $updated[] = $langcode . ':' . $key;
+      }
+    }
+  }
+
+  return 'Added application links to notification templates: '
+    . ($updated === [] ? 'none' : implode(', ', $updated));
+}
+
+/**
+ * Adds application detail links to translated notification templates.
+ */
+function beantragt_notification_update_10003(): string {
+  $updated = [];
+
+  if (\Drupal::moduleHandler()->moduleExists('language')) {
+    /** @var \Drupal\language\Config\LanguageConfigFactoryOverrideInterface $language_config_override */
+    $language_config_override = \Drupal::service('language.config_factory_override');
+    foreach (array_keys(\Drupal::languageManager()->getLanguages()) as $langcode) {
+      $override = $language_config_override->getOverride(
+        $langcode,
+        'beantragt_notification.mail',
+      );
+      $override_updated = _beantragt_notification_add_application_links_to_mail_config($override);
+
+      foreach ($override_updated as $key) {
+        $updated[] = $langcode . ':' . $key;
+      }
+    }
+  }
+
+  return 'Added application links to translated notification templates: '
+    . ($updated === [] ? 'none' : implode(', ', $updated));
+}
+
+/**
+ * Grants notification template management to Department Admin.
+ */
+function beantragt_notification_update_10004(): string {
+  return _beantragt_notification_grant_template_permissions()
+    ? 'Granted notification template administration to department_admin.'
+    : 'Notification template administration permission was already present or unavailable.';
+}
+
+/**
+ * Adds English notification template overrides.
+ */
+function beantragt_notification_update_10005(): string {
+  $updated = _beantragt_notification_write_english_mail_templates();
+
+  return 'Added English notification templates: '
+    . ($updated === [] ? 'none' : implode(', ', $updated));
+}
+
+/**
+ * Enables Language and adds English notification template overrides.
+ */
+function beantragt_notification_update_10006(): string {
+  $language_installed = _beantragt_notification_ensure_language_module();
+  $updated = _beantragt_notification_write_english_mail_templates();
+
+  return 'Language module installed: '
+    . ($language_installed ? 'yes' : 'no')
+    . '; added English notification templates: '
+    . ($updated === [] ? 'none' : implode(', ', $updated));
+}
+
+/**
+ * Sets German as platform default and keeps English notification overrides.
+ */
+function beantragt_notification_update_10007(): string {
+  $language_changed = _beantragt_notification_ensure_platform_languages();
+  $updated = _beantragt_notification_write_english_mail_templates();
+
+  return 'Platform languages changed: '
+    . ($language_changed ? 'yes' : 'no')
+    . '; added English notification templates: '
+    . ($updated === [] ? 'none' : implode(', ', $updated));
+}
+
+/**
+ * Revokes global notification template management from Department Admin.
+ */
+function beantragt_notification_update_10008(): string {
+  return _beantragt_notification_revoke_template_permissions_from_department_admin()
+    ? 'Revoked global notification template administration from department_admin.'
+    : 'department_admin had no global notification template administration.';
+}
+
+/**
+ * Adds assignment notification templates and enables the default.
+ */
+function beantragt_notification_update_10009(): string {
+  $mail_config = \Drupal::configFactory()->getEditable('beantragt_notification.mail');
+  $settings_config = \Drupal::configFactory()->getEditable('beantragt_notification.settings');
+  $updated = [];
+
+  foreach (_beantragt_notification_assignment_mail_templates() as $key => $template) {
+    $current = $mail_config->get($key);
+    if (!is_array($current) || empty($current['subject']) || empty($current['body'])) {
+      $mail_config->set($key, $template);
+      $updated[] = $key;
+    }
+    $settings_config->set("enabled_templates.$key", TRUE);
+  }
+
+  if ($updated !== []) {
+    $mail_config->save();
+  }
+  $settings_config->save();
+
+  $english_updated = _beantragt_notification_write_english_mail_templates();
+
+  return 'Added assignment notification templates: '
+    . ($updated === [] ? 'none' : implode(', ', $updated))
+    . '; added English notification templates: '
+    . ($english_updated === [] ? 'none' : implode(', ', $english_updated));
+}
+
+/**
+ * Replaces the legacy Mark-a-Spot site sender with beantragt.ai.
+ */
+function beantragt_notification_update_10010(): string {
+  $config = \Drupal::configFactory()->getEditable('system.site');
+  $updated = [];
+
+  if ((string) $config->get('mail') === 'admin@markaspot.de') {
+    $config->set('mail', 'admin@beantragt.ai');
+    $updated[] = 'mail';
+  }
+
+  if ((string) $config->get('mail_notification') === 'admin@markaspot.de') {
+    $config->set('mail_notification', 'admin@beantragt.ai');
+    $updated[] = 'mail_notification';
+  }
+
+  if ($updated !== []) {
+    $config->save();
+  }
+
+  return 'Updated legacy site sender fields: '
+    . ($updated === [] ? 'none' : implode(', ', $updated));
+}
+
+/**
+ * Adds deadline reminder notification templates.
+ */
+function beantragt_notification_update_10011(): string {
+  $mail_config = \Drupal::configFactory()->getEditable('beantragt_notification.mail');
+  $settings_config = \Drupal::configFactory()->getEditable('beantragt_notification.settings');
+  $updated = [];
+
+  foreach (_beantragt_notification_deadline_mail_templates() as $key => $template) {
+    $current = $mail_config->get($key);
+    if (!is_array($current) || empty($current['subject']) || empty($current['body'])) {
+      $mail_config->set($key, $template);
+      $updated[] = $key;
+    }
+    if ($settings_config->get("enabled_templates.$key") === NULL) {
+      $settings_config->set("enabled_templates.$key", FALSE);
+    }
+  }
+
+  if ($updated !== []) {
+    $mail_config->save();
+  }
+  $settings_config->save();
+
+  $english_updated = _beantragt_notification_write_english_mail_templates();
+
+  return 'Added disabled deadline notification templates: '
+    . ($updated === [] ? 'none' : implode(', ', $updated))
+    . '; added English notification templates: '
+    . ($english_updated === [] ? 'none' : implode(', ', $english_updated));
+}
+
+/**
+ * Returns old default phrases and their German spelling.
+ *
+ * @return array<string, string>
+ *   Replacement map for notification subjects and bodies.
+ */
+function _beantragt_notification_german_mail_replacements(): array {
+  return [
+    'Eingangsbestaetigung' => 'Eingangsbestätigung',
+    'Statusaenderung' => 'Statusänderung',
+    'Rueckfrage zu Ihrem Antrag' => 'Rückfrage zu Ihrem Antrag',
+    'Antwort vom Buerger zu Antrag' => 'Antwort vom Bürger zu Antrag',
+    'vielen Dank fuer Ihren Antrag' => 'vielen Dank für Ihren Antrag',
+    'schnellstmoeglich' => 'schnellstmöglich',
+    'Bei Rueckfragen' => 'Bei Rückfragen',
+    'geaendert' => 'geändert',
+    'zustaendige Stelle' => 'zuständige Stelle',
+    'Begruendung' => 'Begründung',
+    'Antrag oeffnen:' => 'Antrag öffnen:',
+    'Bitte pruefen Sie' => 'Bitte prüfen Sie',
+    'Wiedervorlage faellig' => 'Wiedervorlage fällig',
+    'faellig oder ueberfaellig' => 'fällig oder überfällig',
+    'eine Rueckfrage' => 'eine Rückfrage',
+    'die Rueckfrage im geschuetzten Bereich' => 'die Rückfrage im geschützten Bereich',
+    'geschuetzten Verwaltungsbereich' => 'geschützten Verwaltungsbereich',
+  ];
+}
+
+/**
+ * Applies German spelling replacements to one mail config object.
+ *
+ * @param \Drupal\Core\Config\StorableConfigBase $config
+ *   Editable config or language override object.
+ *
+ * @return string[]
+ *   Template ids updated in this config object.
+ */
+function _beantragt_notification_update_german_mail_config(
+  StorableConfigBase $config,
+): array {
+  $updated = [];
+  $replacements = _beantragt_notification_german_mail_replacements();
+
+  foreach (array_keys(\Drupal::config('beantragt_notification.mail')->getRawData()) as $key) {
+    $template = $config->get($key);
+    if (!is_array($template)) {
+      continue;
+    }
+
+    foreach (['subject', 'body'] as $field) {
+      if (!isset($template[$field]) || !is_string($template[$field])) {
+        continue;
+      }
+
+      $next = strtr($template[$field], $replacements);
+      if ($next === $template[$field]) {
+        continue;
+      }
+
+      $config->set($key . '.' . $field, $next);
+      $updated[] = $key;
+    }
+  }
+
+  if ($updated !== []) {
+    $config->save();
+  }
+
+  return array_values(array_unique($updated));
+}
+
+/**
+ * Replaces legacy ASCII transliterations in German notification templates.
+ */
+function beantragt_notification_update_10012(): string {
+  $updated = _beantragt_notification_update_german_mail_config(
+    \Drupal::configFactory()->getEditable('beantragt_notification.mail'),
+  );
+
+  if (\Drupal::moduleHandler()->moduleExists('language')) {
+    /** @var \Drupal\language\Config\LanguageConfigFactoryOverrideInterface $language_config_override */
+    $language_config_override = \Drupal::service('language.config_factory_override');
+    foreach (['de'] as $langcode) {
+      $override = $language_config_override->getOverride(
+        $langcode,
+        'beantragt_notification.mail',
+      );
+      foreach (_beantragt_notification_update_german_mail_config($override) as $key) {
+        $updated[] = $langcode . ':' . $key;
+      }
+    }
+  }
+
+  return 'Updated German notification template spelling: '
+    . ($updated === [] ? 'none' : implode(', ', array_unique($updated)));
+}
+
+/**
+ * Adds the double opt-in confirmation request template.
+ */
+function beantragt_notification_update_10013(): string {
+  $mail_config = \Drupal::configFactory()->getEditable('beantragt_notification.mail');
+  $settings_config = \Drupal::configFactory()->getEditable('beantragt_notification.settings');
+  $updated = [];
+
+  foreach (_beantragt_notification_confirmation_request_mail_templates() as $key => $template) {
+    $current = $mail_config->get($key);
+    if (!is_array($current) || empty($current['subject']) || empty($current['body'])) {
+      $mail_config->set($key, $template);
+      $updated[] = $key;
+    }
+    $settings_config->set("enabled_templates.$key", TRUE);
+  }
+
+  if ($updated !== []) {
+    $mail_config->save();
+  }
+  $settings_config->save();
+
+  $english_updated = _beantragt_notification_write_english_mail_templates();
+
+  return 'Added double opt-in notification templates: '
+    . ($updated === [] ? 'none' : implode(', ', $updated))
+    . '; added English notification templates: '
+    . ($english_updated === [] ? 'none' : implode(', ', $english_updated));
+}
+
+/**
+ * Removes applicant/application metadata from pre-confirmation emails.
+ */
+function beantragt_notification_update_10014(): string {
+  $mail_config = \Drupal::configFactory()->getEditable('beantragt_notification.mail');
+  $updated = [];
+  foreach (_beantragt_notification_confirmation_request_mail_templates() as $key => $template) {
+    $mail_config->set($key, $template);
+    $updated[] = $key;
+  }
+  $mail_config->save();
+
+  $english_updated = [];
+  if (\Drupal::moduleHandler()->moduleExists('language')
+    && \Drupal::hasService('language.config_factory_override')) {
+    /** @var \Drupal\language\Config\LanguageConfigFactoryOverrideInterface $language_config_override */
+    $language_config_override = \Drupal::service('language.config_factory_override');
+    $override = $language_config_override->getOverride('en', 'beantragt_notification.mail');
+    foreach (_beantragt_notification_english_mail_templates() as $key => $template) {
+      if ($key !== 'application_confirmation_request') {
+        continue;
+      }
+      $override->set($key, $template);
+      $english_updated[] = $key;
+    }
+    if ($english_updated !== []) {
+      $override->save();
+    }
+  }
+
+  return 'Sanitized double opt-in notification templates: '
+    . implode(', ', $updated)
+    . '; sanitized English overrides: '
+    . ($english_updated === [] ? 'none' : implode(', ', $english_updated));
+}
+
+/**
+ * Builds the per-jurisdiction notification_mail seed section.
+ *
+ * @return array{templates: array<string, array<string, mixed>>}
+ *   Seed section keyed by template id.
+ */
+function _beantragt_notification_build_notification_mail_seed_section(): array {
+  /** @var \Drupal\beantragt_group\Service\NotificationTemplateCatalogInterface $catalog */
+  $catalog = \Drupal::service('beantragt_notification.template_catalog');
+  $config_factory = \Drupal::configFactory();
+  $mail_config = $config_factory->getEditable('beantragt_notification.mail');
+  $settings_config = $config_factory->get('beantragt_notification.settings');
+  $language_manager = \Drupal::languageManager();
+  $site_default_langcode = $language_manager->getDefaultLanguage()->getId();
+  $language_override = \Drupal::hasService('language.config_factory_override')
+    ? \Drupal::service('language.config_factory_override')
+    : NULL;
+
+  $languages = array_keys($language_manager->getLanguages());
+  if (!in_array('en', $languages, TRUE) && $language_override !== NULL) {
+    $languages[] = 'en';
+  }
+
+  $section = ['templates' => []];
+  foreach ($catalog->all() as $templateKey => $definition) {
+    $site_default_template = NULL;
+    if ($language_override !== NULL) {
+      $override_template = $language_override
+        ->getOverride($site_default_langcode, 'beantragt_notification.mail')
+        ->get($templateKey);
+      $site_default_template = is_array($override_template) ? $override_template : NULL;
+    }
+
+    $base_template = $mail_config->get($templateKey);
+    $default = _beantragt_notification_template_text_from_candidates(
+      $site_default_template,
+      is_array($base_template) ? $base_template : NULL,
+      $definition,
+    );
+
+    $enabled = $catalog->isLockedEnabled($templateKey)
+      || (bool) ($settings_config->get('enabled_templates.' . $templateKey) ?? $definition['enabled']);
+
+    $seed = [
+      'enabled' => $enabled,
+      'default' => $default,
+    ];
+
+    $translations = [];
+    if ($language_override !== NULL) {
+      foreach ($languages as $langcode) {
+        if ($langcode === $site_default_langcode) {
+          continue;
+        }
+        $translation = $language_override
+          ->getOverride($langcode, 'beantragt_notification.mail')
+          ->get($templateKey);
+        if (is_array($translation)) {
+          $translation_text = _beantragt_notification_template_text_from_candidates($translation);
+          if ($translation_text !== []) {
+            $translations[$langcode] = $translation_text;
+          }
+        }
+      }
+    }
+    if ($translations !== []) {
+      $seed['translations'] = $translations;
+    }
+
+    $section['templates'][$templateKey] = $seed;
+  }
+
+  return $section;
+}
+
+/**
+ * Resolves subject/body from the first candidate that provides each field.
+ *
+ * @param array<string, mixed>|null ...$candidates
+ *   Candidate template entries.
+ *
+ * @return array<string, string>
+ *   Template text.
+ */
+function _beantragt_notification_template_text_from_candidates(?array ...$candidates): array {
+  $text = [];
+
+  foreach (['subject', 'body'] as $field) {
+    foreach ($candidates as $candidate) {
+      if (is_array($candidate) && array_key_exists($field, $candidate) && is_string($candidate[$field]) && trim($candidate[$field]) !== '') {
+        $text[$field] = $candidate[$field];
+        break;
+      }
+    }
+  }
+
+  return $text;
+}
+
+/**
+ * Fills missing notification_mail template keys on one existing section.
+ *
+ * @param array<string, mixed> $section
+ *   Existing notification_mail section.
+ * @param array{templates: array<string, array<string, mixed>>} $seed
+ *   Seed notification_mail section.
+ *
+ * @return array{templates: array<string, array<string, mixed>>}
+ *   Merged section.
+ */
+function _beantragt_notification_merge_notification_mail_seed(array $section, array $seed): array {
+  $current_templates = is_array($section['templates'] ?? NULL) ? $section['templates'] : [];
+  $next = ['templates' => $current_templates];
+
+  foreach ($seed['templates'] as $templateKey => $seed_template) {
+    $current = is_array($next['templates'][$templateKey] ?? NULL) ? $next['templates'][$templateKey] : [];
+    if ($current === []) {
+      $next['templates'][$templateKey] = $seed_template;
+      continue;
+    }
+
+    if (!array_key_exists('enabled', $current)) {
+      $current['enabled'] = $seed_template['enabled'];
+    }
+    if ($templateKey === 'application_confirmation_request') {
+      $current['enabled'] = TRUE;
+    }
+
+    $current_default = is_array($current['default'] ?? NULL) ? $current['default'] : [];
+    $seed_default = is_array($seed_template['default'] ?? NULL) ? $seed_template['default'] : [];
+    foreach (['subject', 'body'] as $field) {
+      if (!array_key_exists($field, $current_default) && array_key_exists($field, $seed_default)) {
+        $current_default[$field] = $seed_default[$field];
+      }
+    }
+    if ($current_default !== []) {
+      $current['default'] = $current_default;
+    }
+
+    $seed_translations = is_array($seed_template['translations'] ?? NULL) ? $seed_template['translations'] : [];
+    if ($seed_translations !== []) {
+      $translations = is_array($current['translations'] ?? NULL) ? $current['translations'] : [];
+      foreach ($seed_translations as $langcode => $translation) {
+        if (!is_array($translation) || $translation === []) {
+          continue;
+        }
+        if (!array_key_exists($langcode, $translations)) {
+          $translations[$langcode] = $translation;
+          continue;
+        }
+        if (!is_array($translations[$langcode])) {
+          $translations[$langcode] = $translation;
+          continue;
+        }
+        foreach (['subject', 'body'] as $field) {
+          if (!array_key_exists($field, $translations[$langcode]) && array_key_exists($field, $translation)) {
+            $translations[$langcode][$field] = $translation[$field];
+          }
+        }
+      }
+      $current['translations'] = $translations;
+    }
+
+    $next['templates'][$templateKey] = $current;
+  }
+
+  return $next;
+}
+
+/**
+ * Seeds notification_mail templates into all jurisdiction config blobs.
+ */
+function beantragt_notification_update_10015(): string {
+  /** @var \Drupal\Core\Entity\EntityStorageInterface $group_storage */
+  $group_storage = \Drupal::entityTypeManager()->getStorage('group');
+  /** @var \Drupal\beantragt_group\Service\JurisdictionConfigServiceInterface $config_service */
+  $config_service = \Drupal::service('beantragt_group.jurisdiction_config');
+  $seed = _beantragt_notification_build_notification_mail_seed_section();
+  $updated = 0;
+  $groups = $group_storage->loadByProperties(['type' => 'jur']);
+
+  foreach ($groups as $group) {
+    if (!$group instanceof GroupInterface) {
+      continue;
+    }
+    $current = $config_service->getSection($group, 'notification_mail');
+    $next = _beantragt_notification_merge_notification_mail_seed($current, $seed);
+    if ($next !== $current) {
+      $config_service->updateSection($group, 'notification_mail', $next);
+      $updated++;
+    }
+  }
+
+  return 'Seeded jurisdiction notification_mail templates for jurisdictions: ' . $updated;
+}
+
+/**
+ * Adds delegation notification templates and enables the default.
+ */
+function beantragt_notification_update_10016(): string {
+  $mail_config = \Drupal::configFactory()->getEditable('beantragt_notification.mail');
+  $settings_config = \Drupal::configFactory()->getEditable('beantragt_notification.settings');
+  $updated = [];
+
+  foreach (_beantragt_notification_delegation_mail_templates() as $key => $template) {
+    $current = $mail_config->get($key);
+    if (!is_array($current) || empty($current['subject']) || empty($current['body'])) {
+      $mail_config->set($key, $template);
+      $updated[] = $key;
+    }
+    $settings_config->set("enabled_templates.$key", TRUE);
+  }
+
+  if ($updated !== []) {
+    $mail_config->save();
+  }
+  $settings_config->save();
+
+  $english_updated = _beantragt_notification_write_english_mail_templates();
+  $jurisdictions_seeded = 0;
+
+  if (\Drupal::hasService('beantragt_group.jurisdiction_config')) {
+    /** @var \Drupal\Core\Entity\EntityStorageInterface $group_storage */
+    $group_storage = \Drupal::entityTypeManager()->getStorage('group');
+    /** @var \Drupal\beantragt_group\Service\JurisdictionConfigServiceInterface $config_service */
+    $config_service = \Drupal::service('beantragt_group.jurisdiction_config');
+    $seed = _beantragt_notification_build_notification_mail_seed_section();
+
+    foreach ($group_storage->loadByProperties(['type' => 'jur']) as $group) {
+      if (!$group instanceof GroupInterface) {
+        continue;
+      }
+      $current = $config_service->getSection($group, 'notification_mail');
+      $next = _beantragt_notification_merge_notification_mail_seed($current, $seed);
+      if ($next !== $current) {
+        $config_service->updateSection($group, 'notification_mail', $next);
+        $jurisdictions_seeded++;
+      }
+    }
+  }
+
+  return 'Added delegation notification templates: '
+    . ($updated === [] ? 'none' : implode(', ', $updated))
+    . '; added English notification templates: '
+    . ($english_updated === [] ? 'none' : implode(', ', $english_updated))
+    . '; seeded jurisdiction notification_mail templates for jurisdictions: '
+    . $jurisdictions_seeded;
+}
+
+/**
+ * Adds resubmission reminder templates and enables the default.
+ */
+function beantragt_notification_update_10017(): string {
+  $mail_config = \Drupal::configFactory()->getEditable('beantragt_notification.mail');
+  $settings_config = \Drupal::configFactory()->getEditable('beantragt_notification.settings');
+  $updated = [];
+
+  foreach (_beantragt_notification_resubmission_mail_templates() as $key => $template) {
+    $current = $mail_config->get($key);
+    if (!is_array($current) || empty($current['subject']) || empty($current['body'])) {
+      $mail_config->set($key, $template);
+      $updated[] = $key;
+    }
+    $settings_config->set("enabled_templates.$key", TRUE);
+  }
+
+  if ($updated !== []) {
+    $mail_config->save();
+  }
+  $settings_config->save();
+
+  $english_updated = _beantragt_notification_write_english_mail_templates();
+  $jurisdictions_seeded = 0;
+
+  if (\Drupal::hasService('beantragt_group.jurisdiction_config')) {
+    /** @var \Drupal\Core\Entity\EntityStorageInterface $group_storage */
+    $group_storage = \Drupal::entityTypeManager()->getStorage('group');
+    /** @var \Drupal\beantragt_group\Service\JurisdictionConfigServiceInterface $config_service */
+    $config_service = \Drupal::service('beantragt_group.jurisdiction_config');
+    $seed = _beantragt_notification_build_notification_mail_seed_section();
+
+    foreach ($group_storage->loadByProperties(['type' => 'jur']) as $group) {
+      if (!$group instanceof GroupInterface) {
+        continue;
+      }
+      $current = $config_service->getSection($group, 'notification_mail');
+      $next = _beantragt_notification_merge_notification_mail_seed($current, $seed);
+      if ($next !== $current) {
+        $config_service->updateSection($group, 'notification_mail', $next);
+        $jurisdictions_seeded++;
+      }
+    }
+  }
+
+  return 'Added resubmission reminder notification templates: '
+    . ($updated === [] ? 'none' : implode(', ', $updated))
+    . '; added English notification templates: '
+    . ($english_updated === [] ? 'none' : implode(', ', $english_updated))
+    . '; seeded jurisdiction notification_mail templates for jurisdictions: '
+    . $jurisdictions_seeded;
+}
+
+/**
+ * Adds external response notifications without changing existing templates.
+ */
+function beantragt_notification_update_10018(): string {
+  $factory = \Drupal::configFactory();
+  $mail = $factory->getEditable('beantragt_notification.mail');
+  if ($mail->get('external_response_available') === NULL) {
+    $mail->set('external_response_available', [
+      'subject' => 'Ein neues Dokument zu Ihrem Antrag @reference_number',
+      'body' => "Zu Ihrem Antrag liegt ein neues Dokument im Bürgerportal bereit.\n\nBitte melden Sie sich an, um es abzurufen:\n@citizen_application_url",
+    ])->save();
+  }
+  $settings = $factory->getEditable('beantragt_notification.settings');
+  if ($settings->get('enabled_templates.external_response_available') === NULL) {
+    $settings->set('enabled_templates.external_response_available', TRUE)->save();
+  }
+  _beantragt_notification_write_english_mail_templates();
+  return 'Added citizen notifications for released external responses.';
+}
+
+/**
+ * Implements hook_schema().
+ */
+function beantragt_notification_schema(): array {
+  return [
+    'beantragt_reminder_schedule' => [
+      'description' => 'Indexed internal due dates for bounded staff reminders.',
+      'fields' => [
+        'application_id' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE],
+        'status_id' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE],
+        'status_entered' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => TRUE],
+        'escalation_due' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => FALSE],
+        'reminder_due' => ['type' => 'int', 'unsigned' => TRUE, 'not null' => FALSE],
+      ],
+      'primary key' => ['application_id'],
+      'indexes' => [
+        'escalation_due' => ['escalation_due', 'application_id'],
+        'reminder_due' => ['reminder_due', 'application_id'],
+      ],
+    ],
+  ];
+}
+
+/**
+ * Adds indexed reminder due dates; cron backfills existing cases in pages.
+ */
+function beantragt_notification_update_10019(): string {
+  $database = \Drupal::database();
+  if (!$database->schema()->tableExists('beantragt_reminder_schedule')) {
+    $database->schema()->createTable('beantragt_reminder_schedule', beantragt_notification_schema()['beantragt_reminder_schedule']);
+  }
+  \Drupal::state()->set('beantragt_notification.schedule_rebuild', TRUE);
+  \Drupal::state()->set('beantragt_notification.schedule_cursor', 0);
+  return 'Added reminder schedule. Cron backfills at most 100 applications per run.';
+}
+
+/**
+ * Clears old cached per-case markers read directly from key/value storage.
+ */
+function beantragt_notification_update_10020(): string {
+  \Drupal::state()->resetCache();
+  return 'Cleared cached reminder markers. Legacy values remain in direct key/value storage.';
+}
+
+/**
+ * Updates standard office wording in stored German notification templates.
+ */
+function beantragt_notification_update_10021(): void {
+  $replacements = [
+    'status_change' => [
+      'Bei Fragen wenden Sie sich bitte an Ihre zuständige Stelle.' => 'Bei Fragen wenden Sie sich bitte an Ihre zuständige Dienststelle.',
+      'Bei Fragen wenden Sie sich bitte an Ihre zustaendige Stelle.' => 'Bei Fragen wenden Sie sich bitte an Ihre zuständige Dienststelle.',
+    ],
+    'rejection' => [
+      'Ihre zuständige Stelle.' => 'Ihre zuständige Dienststelle.',
+      'Ihre zustaendige Stelle.' => 'Ihre zuständige Dienststelle.',
+    ],
+    'delegation_alert' => [
+      'Ein Antrag wurde an Ihre Organisation delegiert.' => 'Ein Antrag wurde an Ihre Dienststelle delegiert.',
+    ],
+  ];
+
+  $factory = \Drupal::configFactory();
+  $configs = [$factory->getEditable('beantragt_notification.mail')];
+  if (\Drupal::hasService('language.config_factory_override')) {
+    /** @var \Drupal\language\Config\LanguageConfigFactoryOverrideInterface $override */
+    $override = \Drupal::service('language.config_factory_override');
+    $configs[] = $override->getOverride('de', 'beantragt_notification.mail');
+  }
+
+  foreach ($configs as $config) {
+    $changed = FALSE;
+    foreach ($replacements as $key => $phrases) {
+      $path = $key . '.body';
+      $body = $config->get($path);
+      if (is_string($body) && ($next = strtr($body, $phrases)) !== $body) {
+        $config->set($path, $next);
+        $changed = TRUE;
+      }
+    }
+    if ($changed) {
+      $config->save();
+    }
+  }
+
+  /** @var \Drupal\beantragt_group\Service\JurisdictionConfigServiceInterface $service */
+  $service = \Drupal::service('beantragt_group.jurisdiction_config');
+  $storage = \Drupal::entityTypeManager()->getStorage('group');
+  foreach ($storage->loadByProperties(['type' => 'jur']) as $group) {
+    if (!$group instanceof GroupInterface) {
+      continue;
+    }
+    $service->withLockedGroup($group, static function (GroupInterface $fresh) use ($service, $replacements): void {
+      $section = $service->getSection($fresh, 'notification_mail');
+      $next = $section;
+      foreach ($replacements as $key => $phrases) {
+        $body = $section['templates'][$key]['default']['body'] ?? NULL;
+        if (is_string($body)) {
+          $next['templates'][$key]['default']['body'] = strtr($body, $phrases);
+        }
+        $body = $section['templates'][$key]['translations']['de']['body'] ?? NULL;
+        if (is_string($body)) {
+          $next['templates'][$key]['translations']['de']['body'] = strtr($body, $phrases);
+        }
+      }
+      if ($next !== $section) {
+        $service->updateSection($fresh, 'notification_mail', $next);
+      }
+    });
+  }
+}

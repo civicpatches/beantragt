@@ -1,0 +1,15 @@
+entity.applicant.canonical:
+  route_name: entity.applicant.canonical
+  base_route: entity.applicant.canonical
+  title: 'View'
+
+entity.applicant.edit_form:
+  route_name: entity.applicant.edit_form
+  base_route: entity.applicant.canonical
+  title: 'Edit'
+
+entity.applicant.delete_form:
+  route_name: entity.applicant.delete_form
+  base_route: entity.applicant.canonical
+  title: 'Delete'
+  weight: 10

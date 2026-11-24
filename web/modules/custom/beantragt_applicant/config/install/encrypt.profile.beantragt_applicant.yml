@@ -1,0 +1,10 @@
+dependencies:
+  config:
+    - key.key.beantragt_applicant
+  module:
+    - real_aes
+id: beantragt_applicant
+label: 'Beantragt applicant field encryption'
+encryption_method: real_aes
+encryption_method_configuration: {  }
+encryption_key: beantragt_applicant

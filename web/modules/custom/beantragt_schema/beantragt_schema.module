@@ -1,0 +1,75 @@
+<?php
+
+/**
+ * @file
+ * Hooks for the beantragt_schema module.
+ */
+
+declare(strict_types=1);
+
+use Drupal\Core\Access\AccessResult;
+use Drupal\Core\Access\AccessResultInterface;
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Field\FieldDefinitionInterface;
+use Drupal\Core\Field\FieldItemListInterface;
+use Drupal\Core\Session\AccountInterface;
+
+/**
+ * Implements hook_entity_field_access().
+ */
+function beantragt_schema_entity_field_access(
+  string $operation,
+  FieldDefinitionInterface $field_definition,
+  AccountInterface $account,
+  ?FieldItemListInterface $items = NULL,
+): AccessResultInterface {
+  if ($field_definition->getTargetEntityTypeId() !== 'form_schema') {
+    return AccessResult::neutral();
+  }
+
+  if ($field_definition->getName() === 'field_ai_review_pending') {
+    if ($operation !== 'view') {
+      return AccessResult::forbidden('AI review status is managed by the form lifecycle.');
+    }
+    $can_view = $account->isAuthenticated()
+      && ($account->hasPermission('view unpublished form_schema entities')
+        || $account->hasPermission('administer form_schema entities'));
+    return ($can_view ? AccessResult::allowed() : AccessResult::forbidden())
+      ->cachePerPermissions()
+      ->addCacheContexts(['user.roles:authenticated']);
+  }
+
+  if ($field_definition->getName() !== 'field_workflow_definition') {
+    return AccessResult::neutral();
+  }
+
+  $can_view = $account->hasPermission('administer form_schema entities')
+    || $account->hasPermission('edit any form_schema entities')
+    || $account->hasPermission('manage workflow transitions');
+  if ($operation === 'view') {
+    return $can_view
+      ? AccessResult::allowed()->cachePerPermissions()
+      : AccessResult::forbidden('Workflow definitions are staff-only.')
+        ->cachePerPermissions();
+  }
+
+  $can_write = $account->hasPermission('administer form_schema entities')
+    || $account->hasPermission('edit any form_schema entities');
+  if (in_array($operation, ['edit', 'update', 'create'], TRUE)) {
+    return $can_write
+      ? AccessResult::allowed()->cachePerPermissions()
+      : AccessResult::forbidden('Workflow definitions are staff-only.')
+        ->cachePerPermissions();
+  }
+
+  return AccessResult::neutral();
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_delete() for form_schema.
+ *
+ * Removes the guided form setup log rows of a deleted form.
+ */
+function beantragt_schema_form_schema_delete(EntityInterface $entity): void {
+  \Drupal::service('beantragt_schema.form_setup_log')->deleteForForm((string) $entity->uuid());
+}

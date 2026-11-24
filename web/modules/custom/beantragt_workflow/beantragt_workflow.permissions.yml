@@ -1,0 +1,11 @@
+manage workflow transitions:
+  title: 'Manage workflow transitions'
+  description: 'Allows changing the workflow status of applications.'
+
+view workflow assignments:
+  title: 'View workflow assignments'
+  description: 'Allows viewing which user an application is assigned to.'
+
+assign applications:
+  title: 'Assign applications'
+  description: 'Allows assigning applications to other users.'

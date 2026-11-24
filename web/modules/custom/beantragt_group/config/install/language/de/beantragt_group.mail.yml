@@ -1,0 +1,13 @@
+workspace_invitation:
+  subject: '@site_name: Einladung für @target_parent'
+  body: |
+    Guten Tag,
+
+    Sie wurden eingeladen, einen Arbeitsbereich unter "@target_parent" auf @site_name einzurichten.
+
+    Öffnen Sie dazu folgenden Link:
+    @claim_url
+
+    Diese Einladung ist @expires_in Tage gültig.
+
+    Falls Sie diese Einladung nicht erwartet haben, können Sie diese E-Mail ignorieren.

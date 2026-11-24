@@ -1,0 +1,337 @@
+{
+    "beantragt_integration_connection": {
+        "description": "Tenant-scoped integration connection definitions.",
+        "fields": {
+            "uuid": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": true
+            },
+            "scope_group_id": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "created": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "changed": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "uid": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "contract_key": {
+                "type": "varchar_ascii",
+                "length": 128,
+                "not null": true
+            },
+            "contract_version": {
+                "type": "varchar_ascii",
+                "length": 32,
+                "not null": true
+            },
+            "label": {
+                "type": "varchar",
+                "length": 255,
+                "not null": true
+            },
+            "adapter": {
+                "type": "varchar_ascii",
+                "length": 32,
+                "not null": true
+            },
+            "environment": {
+                "type": "varchar_ascii",
+                "length": 16,
+                "not null": true
+            },
+            "credential_profile": {
+                "type": "varchar_ascii",
+                "length": 128,
+                "not null": true
+            },
+            "destination_id": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": true
+            },
+            "service_urn": {
+                "type": "varchar_ascii",
+                "length": 255,
+                "not null": true
+            },
+            "service_name": {
+                "type": "varchar",
+                "length": 255,
+                "not null": true
+            },
+            "reply_process_standard": {
+                "type": "varchar_ascii",
+                "length": 255,
+                "not null": false
+            },
+            "status": {
+                "type": "varchar_ascii",
+                "length": 16,
+                "not null": true
+            },
+            "last_check_result": {
+                "type": "text",
+                "size": "big",
+                "not null": false
+            }
+        },
+        "primary key": [
+            "uuid"
+        ],
+        "indexes": {
+            "scope": [
+                "scope_group_id"
+            ]
+        }
+    },
+    "beantragt_integration_mapping": {
+        "description": "Tenant-scoped integration mapping definitions.",
+        "fields": {
+            "uuid": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": true
+            },
+            "scope_group_id": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "created": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "changed": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "uid": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "contract_key": {
+                "type": "varchar_ascii",
+                "length": 128,
+                "not null": true
+            },
+            "contract_version": {
+                "type": "varchar_ascii",
+                "length": 32,
+                "not null": true
+            },
+            "label": {
+                "type": "varchar",
+                "length": 255,
+                "not null": true
+            }
+        },
+        "primary key": [
+            "uuid"
+        ],
+        "indexes": {
+            "scope": [
+                "scope_group_id"
+            ]
+        }
+    },
+    "beantragt_integration_assignment": {
+        "description": "Tenant-scoped integration assignment definitions.",
+        "fields": {
+            "uuid": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": true
+            },
+            "scope_group_id": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "created": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "changed": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "uid": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "form_schema_uuid": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": true
+            },
+            "compatible_revisions": {
+                "type": "text",
+                "size": "big",
+                "not null": true
+            },
+            "service_urn": {
+                "type": "varchar_ascii",
+                "length": 255,
+                "not null": true
+            },
+            "connection_uuid": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": true
+            },
+            "mapping_uuid": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": true
+            },
+            "mapping_version": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "dispatch_mode": {
+                "type": "varchar_ascii",
+                "length": 16,
+                "not null": true
+            },
+            "status": {
+                "type": "varchar_ascii",
+                "length": 16,
+                "not null": true
+            },
+            "active_key": {
+                "type": "varchar_ascii",
+                "length": 64,
+                "not null": false
+            }
+        },
+        "primary key": [
+            "uuid"
+        ],
+        "indexes": {
+            "scope": [
+                "scope_group_id"
+            ],
+            "form_status": [
+                "form_schema_uuid",
+                "status"
+            ],
+            "connection": [
+                "connection_uuid"
+            ],
+            "mapping_version": [
+                "mapping_uuid",
+                "mapping_version"
+            ]
+        },
+        "unique keys": {
+            "single_active": [
+                "active_key"
+            ]
+        }
+    },
+    "beantragt_integration_mapping_version": {
+        "description": "Immutable activated mapping definitions and editable drafts.",
+        "fields": {
+            "mapping_uuid": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": true
+            },
+            "version": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "scope_group_id": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "status": {
+                "type": "varchar_ascii",
+                "length": 16,
+                "not null": true
+            },
+            "form_schema_uuid": {
+                "type": "varchar_ascii",
+                "length": 36,
+                "not null": true
+            },
+            "compatible_revisions": {
+                "type": "text",
+                "size": "big",
+                "not null": true
+            },
+            "rules": {
+                "type": "text",
+                "size": "big",
+                "not null": true
+            },
+            "checksum": {
+                "type": "varchar_ascii",
+                "length": 64,
+                "not null": true
+            },
+            "created": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "changed": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            },
+            "uid": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            }
+        },
+        "primary key": [
+            "mapping_uuid",
+            "version"
+        ],
+        "indexes": {
+            "scope": [
+                "scope_group_id"
+            ],
+            "status": [
+                "status"
+            ]
+        }
+    },
+    "beantragt_integration_scope_lock": {
+        "description": "Serializes integration management mutations per scope.",
+        "fields": {
+            "scope_group_id": {
+                "type": "int",
+                "unsigned": true,
+                "not null": true
+            }
+        },
+        "primary key": [
+            "scope_group_id"
+        ]
+    }
+}

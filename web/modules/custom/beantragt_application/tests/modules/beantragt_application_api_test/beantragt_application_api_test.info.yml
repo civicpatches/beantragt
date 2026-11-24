@@ -1,0 +1,8 @@
+name: Beantragt application API test transport
+type: module
+description: 'Collects test mail in functional API tests instead of using a real transport.'
+package: Testing
+core_version_requirement: ^11
+hidden: true
+dependencies:
+  - beantragt_notification:beantragt_notification

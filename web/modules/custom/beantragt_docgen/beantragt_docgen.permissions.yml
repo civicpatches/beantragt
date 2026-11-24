@@ -1,0 +1,14 @@
+administer docgen templates:
+  title: 'Administer decision templates'
+  description: 'Upload, release and version Word templates for decision notices and assign them to forms, within the organisations the account administers.'
+  restrict access: true
+
+create docgen documents:
+  title: 'Create decision documents'
+  description: 'Create drafts from released templates, upload revised drafts and request the PDF/A preview for applications in the account tenant scope.'
+  restrict access: true
+
+release docgen documents:
+  title: 'Release decision documents'
+  description: 'Release a previewed, compliant PDF/A to the applicant. A person releases, the system only drafts: no fully automated administrative act within the meaning of section 35a VwVfG.'
+  restrict access: true

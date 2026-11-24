@@ -1,0 +1,104 @@
+<?php
+
+/**
+ * @file
+ * Install, update and uninstall functions for beantragt_status.
+ */
+
+declare(strict_types=1);
+
+/**
+ * Implements hook_schema().
+ */
+function beantragt_status_schema(): array {
+  $schema['beantragt_status_otp_codes'] = [
+    'description' => 'Stores hashed OTP codes for public application status lookup.',
+    'fields' => [
+      'id' => [
+        'description' => 'Primary Key: Unique code ID.',
+        'type' => 'serial',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'reference_hash' => [
+        'description' => 'HMAC-SHA-256 hash of the normalized application reference number.',
+        'type' => 'varchar',
+        'length' => 64,
+        'not null' => TRUE,
+      ],
+      'email_hash' => [
+        'description' => 'HMAC-SHA-256 hash of the normalized applicant email address.',
+        'type' => 'varchar',
+        'length' => 64,
+        'not null' => TRUE,
+      ],
+      'code' => [
+        'description' => 'Bcrypt hash of the OTP code.',
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => TRUE,
+      ],
+      'attempts' => [
+        'description' => 'Number of verification attempts.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ],
+      'created' => [
+        'description' => 'Unix timestamp when code was created.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'expires' => [
+        'description' => 'Unix timestamp when code expires.',
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+      ],
+      'verified' => [
+        'description' => 'Whether the code has been verified (0=pending, 1=verified, 2=invalidated).',
+        'type' => 'int',
+        'size' => 'tiny',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'default' => 0,
+      ],
+    ],
+    'primary key' => ['id'],
+    'indexes' => [
+      'lookup' => ['reference_hash', 'email_hash', 'verified'],
+      'expires' => ['expires'],
+      'verified' => ['verified'],
+    ],
+  ];
+
+  return $schema;
+}
+
+/**
+ * Installs status OTP storage for existing sites.
+ */
+function beantragt_status_update_10001(): string {
+  $schema = \Drupal::database()->schema();
+  if ($schema->tableExists('beantragt_status_otp_codes')) {
+    return 'Status OTP code table already exists.';
+  }
+
+  $module_schema = beantragt_status_schema();
+  $schema->createTable('beantragt_status_otp_codes', $module_schema['beantragt_status_otp_codes']);
+
+  return 'Created status OTP code table.';
+}
+
+/**
+ * Sets the default public status link lifetime without changing token hashes.
+ */
+function beantragt_status_update_10002(): string {
+  $config = \Drupal::configFactory()->getEditable('beantragt_status.settings');
+  if ($config->get('public_status_link_ttl_days') === NULL) {
+    $config->set('public_status_link_ttl_days', 180)->save(TRUE);
+  }
+  return 'Configured public status link expiry.';
+}

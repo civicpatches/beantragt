@@ -1,0 +1,100 @@
+beantragt_schema.api_v1_jurisdiction_forms:
+  path: '/api/v1/jurisdictions/{slug}/forms'
+  defaults:
+    _controller: '\Drupal\beantragt_schema\Controller\PublicFormApiController::listJurisdictionForms'
+    _format: json
+  requirements:
+    # Published internet forms are intentionally public citizen content.
+    _access: 'TRUE'
+    slug: '[^/]+'
+  methods: [GET]
+  options:
+    _format: json
+
+beantragt_schema.api_v1_form:
+  path: '/api/v1/forms/{form_schema_uuid}'
+  defaults:
+    _controller: '\Drupal\beantragt_schema\Controller\PublicFormApiController::getForm'
+    _format: json
+  requirements:
+    # The controller rejects unpublished and non-internet form schemas.
+    _access: 'TRUE'
+    form_schema_uuid: '[^/]+'
+  methods: [GET]
+  options:
+    _format: json
+
+beantragt_schema.import:
+  path: '/admin/content/form-schemas/import'
+  defaults:
+    _form: '\Drupal\beantragt_schema\Form\FormSchemaImportForm'
+    _title: 'Import form schema JSON'
+  requirements:
+    _entity_create_access: 'form_schema'
+  options:
+    _admin_route: TRUE
+
+# Guided form setup.
+# Internal routes: Nuxt proxy only,
+# not /api/v1, no OpenAPI and no Bruno coverage by design (AGENTS.md "API
+# coverage is part of done": declared internal). Staff routes run in the staff
+# session; the recommendations route only for the Nuxt service account.
+beantragt_schema.form_setup_capabilities:
+  path: '/api/admin/form-setup/forms/{form}/capabilities'
+  defaults:
+    _controller: '\Drupal\beantragt_schema\Controller\FormSetupController::capabilities'
+    _format: json
+  requirements:
+    _custom_access: '\Drupal\beantragt_schema\Controller\FormSetupController::accessStaff'
+    form: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    _auth: ['cookie']
+
+beantragt_schema.form_setup_state:
+  path: '/api/admin/form-setup/forms/{form}/state'
+  defaults:
+    _controller: '\Drupal\beantragt_schema\Controller\FormSetupController::state'
+    _format: json
+  requirements:
+    _custom_access: '\Drupal\beantragt_schema\Controller\FormSetupController::accessStaff'
+    form: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+  methods: [GET]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    _auth: ['cookie']
+
+beantragt_schema.form_setup_decisions:
+  path: '/api/admin/form-setup/forms/{form}/decisions'
+  defaults:
+    _controller: '\Drupal\beantragt_schema\Controller\FormSetupController::decisions'
+    _format: json
+  requirements:
+    _custom_access: '\Drupal\beantragt_schema\Controller\FormSetupController::accessStaff'
+    _csrf_request_header_token: 'TRUE'
+    form: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    _auth: ['cookie']
+
+# Service account only (HTTP Basic, like every drupalServiceFetch call). The
+# CSRF header check applies to session requests and is skipped for Basic.
+beantragt_schema.form_setup_recommendations:
+  path: '/api/admin/form-setup/forms/{form}/recommendations'
+  defaults:
+    _controller: '\Drupal\beantragt_schema\Controller\FormSetupController::recommendations'
+    _format: json
+  requirements:
+    _custom_access: '\Drupal\beantragt_schema\Controller\FormSetupController::accessService'
+    _csrf_request_header_token: 'TRUE'
+    form: '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+  methods: [POST]
+  options:
+    _format: json
+    no_cache: 'TRUE'
+    _auth: ['basic_auth']

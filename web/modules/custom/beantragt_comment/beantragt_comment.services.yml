@@ -1,0 +1,4 @@
+services:
+  logger.channel.beantragt_comment:
+    parent: logger.channel_base
+    arguments: ['beantragt_comment']

@@ -1,0 +1,11 @@
+name: Beantragt Nachreichung
+type: module
+description: 'Documents sent later: cover sheet identifiers with QR code, request records of request letters, working-day deadlines.'
+package: beantragt.ai
+core_version_requirement: ^11
+dependencies:
+  - drupal:file
+  - group:group
+  - beantragt_application:beantragt_application
+  - beantragt_group:beantragt_group
+  - beantragt_docgen:beantragt_docgen

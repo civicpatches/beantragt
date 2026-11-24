@@ -1,0 +1,81 @@
+services:
+  beantragt_group.jsonapi_group_query_access:
+    class: Drupal\beantragt_group\Service\JsonApiGroupQueryAccess
+    arguments: ['@database', '@entity_type.manager', '@current_user', '@renderer', '@beantragt_group.jurisdiction_hierarchy_resolver', '@request_stack']
+
+  cache_context.beantragt_jsonapi_workspace_scope:
+    class: Drupal\beantragt_group\Cache\Context\JsonApiWorkspaceScopeCacheContext
+    arguments: ['@beantragt_group.jsonapi_group_query_access']
+    tags:
+      - { name: cache.context }
+
+  beantragt_group.shared_account_read_only:
+    class: Drupal\beantragt_group\Service\SharedAccountReadOnly
+
+  beantragt_group.case_layout:
+    class: Drupal\beantragt_group\Service\CaseLayout
+    tags:
+      - { name: beantragt_jurisdiction_config_section }
+
+  beantragt_group.case_layout_store:
+    class: Drupal\beantragt_group\Service\CaseLayoutStore
+    arguments: ['@entity_type.manager', '@beantragt_group.jurisdiction_config']
+
+  beantragt_group.case_layout_access:
+    class: Drupal\beantragt_group\Service\CaseLayoutAccess
+    arguments: ['@beantragt_group.jurisdiction_hierarchy_resolver']
+
+  logger.channel.beantragt_group:
+    parent: logger.channel_base
+    arguments: ['beantragt_group']
+
+  beantragt_group.jurisdiction_hierarchy_resolver:
+    class: Drupal\beantragt_group\Service\JurisdictionHierarchyResolver
+    arguments: ['@entity_type.manager', '@database', '@logger.factory', '@config.factory']
+
+  beantragt_group.org_hierarchy_resolver:
+    class: Drupal\beantragt_group\Service\OrgHierarchyResolver
+    arguments: ['@entity_type.manager', '@database', '@logger.factory']
+
+  beantragt_group.application_scope_authorization:
+    class: Drupal\beantragt_group\Service\ApplicationScopeAuthorization
+    arguments: ['@entity_type.manager', '@beantragt_group.jurisdiction_hierarchy_resolver']
+
+  # The one product path that grants a Fachadministration: named account,
+  # named group, additive. Callers: the operator command, the demo login.
+  beantragt_group.fachadministration_grant:
+    class: Drupal\beantragt_group\Service\FachadministrationGrant
+    arguments: ['@entity_type.manager', '@database', '@current_user', '@logger.channel.beantragt_group']
+
+  beantragt_group.workspace_invite_access:
+    class: Drupal\beantragt_group\Service\WorkspaceInviteAccess
+    arguments: ['@beantragt_group.jurisdiction_hierarchy_resolver', '@config.factory']
+
+  beantragt_group.workspace_invite_token_issuer:
+    class: Drupal\beantragt_group\Service\WorkspaceInviteTokenIssuer
+    arguments: ['@database', '@datetime.time', '@beantragt_group.workspace_invite_access', '@private_key', '@config.factory', '@entity_type.manager']
+
+  beantragt_group.jurisdiction_config:
+    class: Drupal\beantragt_group\Service\JurisdictionConfigService
+    arguments: ['@entity_type.manager', '@lock']
+
+  beantragt_group.jurisdiction_config_validator:
+    class: Drupal\beantragt_group\Service\JurisdictionConfigValidator
+    arguments: ['@email.validator']
+
+  beantragt_group.jurisdiction_config_blob_validator:
+    class: Drupal\beantragt_group\Service\JurisdictionConfigBlobValidator
+    arguments:
+      - '@beantragt_group.jurisdiction_config_validator'
+      - '@?beantragt_notification.template_catalog'
+    tags:
+      - { name: service_collector, tag: beantragt_jurisdiction_config_section, call: addSectionValidator }
+
+  beantragt_group.admin_form_display_completer:
+    class: Drupal\beantragt_group\Service\AdminFormDisplayCompleter
+    arguments: ['@entity_field.manager', '@plugin.manager.field.field_type']
+
+  beantragt_group.admin_group_route_subscriber:
+    class: Drupal\beantragt_group\Routing\AdminGroupRouteSubscriber
+    tags:
+      - { name: event_subscriber }

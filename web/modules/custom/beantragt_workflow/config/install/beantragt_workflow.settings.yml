@@ -1,0 +1,20 @@
+# Auto-escalation settings.
+#
+# Per-application transitions are defined per organisation group on each
+# workflow_status entity (field_allowed_next). This file only keeps the global
+# escalation default.
+#
+# Applications whose current status is non-terminal (field_is_terminal == FALSE)
+# and unchanged for longer than this number of days are flagged for escalation.
+# Set to 0 to disable escalation.
+escalation_days: 14
+
+# Resubmission reminder defaults.
+#
+# Applications whose current status is non-terminal and unchanged for longer
+# than resubmission_days are reminded on the configured interval. A max value
+# of 0 allows unlimited reminders.
+resubmission_days: 42
+resubmission_scope: org
+resubmission_interval_days: 7
+resubmission_max_reminders: 0

@@ -1,0 +1,29 @@
+<?php
+
+/**
+ * @file
+ * Install, update, and uninstall functions for beantragt_compute module.
+ */
+
+declare(strict_types=1);
+
+/**
+ * Implements hook_install().
+ *
+ * Sets the module weight to a value lower (numerically smaller) than
+ * beantragt_workflow so that beantragt_compute_application_presave() fires
+ * BEFORE beantragt_workflow_application_presave().
+ *
+ * Drupal invokes hook_ENTITY_TYPE_presave() in ascending module weight order.
+ * The workflow router (ApplicationRouter::route()) consumes field_data values
+ * set by this module -- if compute runs after workflow, the router would see
+ * stale (potentially client-spoofed) values instead of the authoritative
+ * computed results. A weight of -10 places compute well before any default-
+ * weight (0) module including beantragt_workflow.
+ */
+function beantragt_compute_install(): void {
+  // Weight -10 ensures compute presave fires before beantragt_workflow (weight
+  // 0 by default), so the workflow router always sees authoritative computed
+  // values rather than whatever the client submitted.
+  module_set_weight('beantragt_compute', -10);
+}

@@ -1,0 +1,1925 @@
+<?php
+
+/**
+ * @file
+ * Install and update hooks for the Beantragt content module.
+ */
+
+declare(strict_types=1);
+
+use Drupal\Core\Cache\Cache;
+use Drupal\Core\Entity\Query\QueryInterface;
+use Drupal\file\FileInterface;
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\Core\File\FileExists;
+use Drupal\Core\File\FileSystemInterface;
+use Drupal\field\FieldConfigInterface;
+use Drupal\field\FieldStorageConfigInterface;
+use Drupal\group\Entity\GroupInterface;
+use Drupal\language\ConfigurableLanguageManagerInterface;
+use Drupal\node\NodeInterface;
+
+/**
+ * Implements hook_install().
+ */
+function beantragt_content_install(): void {
+  $entity_type_manager = \Drupal::entityTypeManager();
+  _beantragt_content_ensure_content_model($entity_type_manager);
+  _beantragt_content_label_office_fields_in_german();
+}
+
+/**
+ * Installs page and boilerplate content model on existing sites.
+ */
+function beantragt_content_update_10001(): string {
+  $messages = _beantragt_content_ensure_content_model(\Drupal::entityTypeManager());
+  $messages[] = 'Content model ready.';
+
+  return implode(' ', array_filter($messages));
+}
+
+/**
+ * Retains a historical update number.
+ */
+function beantragt_content_update_10002(): string {
+  return 'No data change.';
+}
+
+/**
+ * Repairs partial installs from early local development builds.
+ */
+function beantragt_content_update_10003(): string {
+  $entity_type_manager = \Drupal::entityTypeManager();
+  $messages = _beantragt_content_ensure_content_model($entity_type_manager);
+
+  return implode(' ', array_filter($messages)) ?: 'Content model already exists.';
+}
+
+/**
+ * Ensures the content model.
+ */
+function beantragt_content_update_10004(): string {
+  $entity_type_manager = \Drupal::entityTypeManager();
+  $messages = _beantragt_content_ensure_content_model($entity_type_manager);
+
+  return implode(' ', array_filter($messages)) ?: 'Content model already exists.';
+}
+
+/**
+ * Retains a historical update number.
+ */
+function beantragt_content_update_10005(): string {
+  return 'No data change.';
+}
+
+/**
+ * Retains a historical update number.
+ */
+function beantragt_content_update_10006(): string {
+  return 'No data change.';
+}
+
+/**
+ * Restricts content page and boilerplate bodies to sanitized basic HTML.
+ */
+function beantragt_content_update_10007(): string {
+  $entity_type_manager = \Drupal::entityTypeManager();
+  $messages = _beantragt_content_ensure_content_model($entity_type_manager);
+
+  return implode(' ', array_filter($messages)) ?: 'Content body formats already restricted.';
+}
+
+/**
+ * Retains a historical update number.
+ */
+function beantragt_content_update_10008(): string {
+  return 'No data change.';
+}
+
+/**
+ * Adds accessibility, easy-language and sign-language public pages.
+ */
+function beantragt_content_update_10009(): string {
+  $entity_type_manager = \Drupal::entityTypeManager();
+  $messages = _beantragt_content_ensure_content_model($entity_type_manager);
+
+  return implode(' ', array_filter($messages)) ?: 'Public content pages already up to date.';
+}
+
+/**
+ * Retains a historical update number.
+ */
+function beantragt_content_update_10010(): string {
+  return 'No data change.';
+}
+
+/**
+ * Adds content-owned public slugs and footer metadata to pages.
+ */
+function beantragt_content_update_10011(): string {
+  $entity_type_manager = \Drupal::entityTypeManager();
+  $messages = _beantragt_content_ensure_content_model($entity_type_manager);
+
+  return implode(' ', array_filter($messages)) ?: 'Public content route metadata already up to date.';
+}
+
+/**
+ * Adds optional organisation scoping to public pages.
+ */
+function beantragt_content_update_10012(): string {
+  $entity_type_manager = \Drupal::entityTypeManager();
+  $messages = _beantragt_content_ensure_content_model($entity_type_manager);
+
+  return implode(' ', array_filter($messages)) ?: 'Page organisation scope already available.';
+}
+
+/**
+ * Adds public document content for editorial downloads and form leaflets.
+ */
+function beantragt_content_update_10013(): string {
+  $entity_type_manager = \Drupal::entityTypeManager();
+  $messages = _beantragt_content_ensure_content_model($entity_type_manager);
+
+  return implode(' ', array_filter($messages)) ?: 'Public document content already available.';
+}
+
+/**
+ * Moves public document files behind Drupal access-controlled delivery.
+ */
+function beantragt_content_update_10014(): string {
+  $entity_type_manager = \Drupal::entityTypeManager();
+  $messages = _beantragt_content_ensure_content_model($entity_type_manager);
+  $messages = array_merge($messages, _beantragt_content_migrate_public_document_files_to_private($entity_type_manager));
+
+  return implode(' ', array_filter($messages)) ?: 'Public document files already use private storage.';
+}
+
+/**
+ * Adds public HTML content sections for org and form placements.
+ */
+function beantragt_content_update_10015(): string {
+  $entity_type_manager = \Drupal::entityTypeManager();
+  $messages = _beantragt_content_ensure_content_model($entity_type_manager);
+
+  return implode(' ', array_filter($messages)) ?: 'Public content sections already available.';
+}
+
+/**
+ * Gives editorial office reference fields German labels.
+ */
+function beantragt_content_update_10017(): void {
+  _beantragt_content_label_office_fields_in_german();
+}
+
+/**
+ * Sets the German office label alongside each editorial field configuration.
+ */
+function _beantragt_content_label_office_fields_in_german(): void {
+  $language_manager = \Drupal::languageManager();
+  if (!$language_manager instanceof ConfigurableLanguageManagerInterface) {
+    return;
+  }
+  foreach (['page', 'boilerplate', 'public_document', 'content_section'] as $bundle) {
+    $name = "field.field.node.$bundle.field_organisation";
+    $base = \Drupal::configFactory()->getEditable($name);
+    $override = $language_manager->getLanguageConfigOverride('de', $name);
+    if (($override->get('label') ?? $base->get('label')) === 'Organisation') {
+      $override->set('label', 'Dienststelle')->save();
+    }
+  }
+}
+
+/**
+ * Moves legacy footer sections and documents to the form sidebar.
+ */
+function beantragt_content_update_10016(): string {
+  $manager = \Drupal::entityTypeManager();
+  $placement = $manager->getStorage('field_storage_config')->load('node.field_content_placement');
+  if (!$placement instanceof FieldStorageConfigInterface) {
+    return 'No public content placement field to update.';
+  }
+
+  // Update shared field data in place, including pending and older revisions
+  // that could otherwise restore the retired value when reverted.
+  $database = \Drupal::database();
+  $bundles = ['content_section', 'public_document'];
+  $changed_ids = [];
+  foreach (['node__field_content_placement', 'node_revision__field_content_placement'] as $table) {
+    $ids = $database->select($table, 'placement')->distinct()
+      ->fields('placement', ['entity_id'])
+      ->condition('bundle', $bundles, 'IN')
+      ->condition('deleted', 0)
+      ->condition('field_content_placement_value', 'footer')
+      ->execute()->fetchCol();
+    $changed_ids = array_merge($changed_ids, $ids);
+    $database->update($table)
+      ->fields(['field_content_placement_value' => 'form_sidebar'])
+      ->condition('bundle', $bundles, 'IN')
+      ->condition('deleted', 0)
+      ->condition('field_content_placement_value', 'footer')
+      ->execute();
+  }
+
+  $values = $placement->getSetting('allowed_values');
+  $remove_footer = isset($values['footer']);
+  if ($changed_ids !== []) {
+    $ids = array_unique($changed_ids);
+    $manager->getStorage('node')->resetCache($ids);
+    Cache::invalidateTags(Cache::buildTags('node', $ids, ':'));
+  }
+  if ($changed_ids !== [] || $remove_footer) {
+    Cache::invalidateTags(['node_list', 'node_list:content_section', 'node_list:public_document']);
+  }
+  if ($remove_footer) {
+    unset($values['footer']);
+    $placement->setSetting('allowed_values', $values)->save();
+  }
+
+  return 'Legacy footer placements moved to the form sidebar.';
+}
+
+/**
+ * Ensures page and boilerplate content types plus scope fields exist.
+ *
+ * @return string[]
+ *   Human-readable changes.
+ */
+function _beantragt_content_ensure_content_model(EntityTypeManagerInterface $entity_type_manager): array {
+  $messages = [];
+  $type_storage = $entity_type_manager->getStorage('node_type');
+
+  if (!$type_storage->load('page')) {
+    $type_storage->create([
+      'type' => 'page',
+      'name' => 'Basic page',
+      'description' => 'Static public content pages such as privacy policy and legal notice.',
+      'help' => '',
+      'new_revision' => TRUE,
+      'preview_mode' => 1,
+      'display_submitted' => FALSE,
+    ])->save();
+    $messages[] = 'Created page content type.';
+  }
+
+  if (!$type_storage->load('boilerplate')) {
+    $type_storage->create([
+      'type' => 'boilerplate',
+      'name' => 'Boilerplate',
+      'description' => 'Reusable text templates for status notes and internal workflows.',
+      'help' => '',
+      'new_revision' => TRUE,
+      'preview_mode' => 1,
+      'display_submitted' => FALSE,
+    ])->save();
+    $messages[] = 'Created boilerplate content type.';
+  }
+
+  if (!$type_storage->load('public_document')) {
+    $type_storage->create([
+      'type' => 'public_document',
+      'name' => 'Public document',
+      'description' => 'Editorial public downloads such as leaflets, fee sheets and form instructions.',
+      'help' => '',
+      'new_revision' => TRUE,
+      'preview_mode' => 1,
+      'display_submitted' => FALSE,
+    ])->save();
+    $messages[] = 'Created public_document content type.';
+  }
+
+  if (!$type_storage->load('content_section')) {
+    $type_storage->create([
+      'type' => 'content_section',
+      'name' => 'Content section',
+      'description' => 'Editorial public HTML sections for organisation starts, form intros, sidebars and submission success pages.',
+      'help' => '',
+      'new_revision' => TRUE,
+      'preview_mode' => 1,
+      'display_submitted' => FALSE,
+    ])->save();
+    $messages[] = 'Created content_section content type.';
+  }
+
+  $messages = array_merge(
+    $messages,
+    _beantragt_content_ensure_field_storages($entity_type_manager),
+    _beantragt_content_ensure_page_fields($entity_type_manager),
+    _beantragt_content_ensure_boilerplate_fields($entity_type_manager),
+    _beantragt_content_ensure_public_document_fields($entity_type_manager),
+    _beantragt_content_ensure_content_section_fields($entity_type_manager),
+  );
+
+  return $messages;
+}
+
+/**
+ * Ensures shared node field storages exist.
+ *
+ * @return string[]
+ *   Human-readable changes.
+ */
+function _beantragt_content_ensure_field_storages(EntityTypeManagerInterface $entity_type_manager): array {
+  $messages = [];
+  $field_storage = $entity_type_manager->getStorage('field_storage_config');
+
+  if (!$field_storage->load('node.body')) {
+    $field_storage->create([
+      'field_name' => 'body',
+      'entity_type' => 'node',
+      'type' => 'text_with_summary',
+      'module' => 'text',
+      'cardinality' => 1,
+      'translatable' => TRUE,
+      'settings' => [],
+    ])->save();
+    $messages[] = 'Created node.body field storage.';
+  }
+
+  if (!$field_storage->load('node.field_jurisdiction')) {
+    $field_storage->create([
+      'field_name' => 'field_jurisdiction',
+      'entity_type' => 'node',
+      'type' => 'entity_reference',
+      'settings' => [
+        'target_type' => 'group',
+      ],
+      'module' => 'core',
+      'cardinality' => 1,
+      'translatable' => FALSE,
+    ])->save();
+    $messages[] = 'Created node.field_jurisdiction field storage.';
+  }
+
+  if (!$field_storage->load('node.field_organisation')) {
+    $field_storage->create([
+      'field_name' => 'field_organisation',
+      'entity_type' => 'node',
+      'type' => 'entity_reference',
+      'settings' => [
+        'target_type' => 'group',
+      ],
+      'module' => 'core',
+      'cardinality' => 1,
+      'translatable' => FALSE,
+    ])->save();
+    $messages[] = 'Created node.field_organisation field storage.';
+  }
+
+  if (!$field_storage->load('node.field_page_key')) {
+    $field_storage->create([
+      'field_name' => 'field_page_key',
+      'entity_type' => 'node',
+      'type' => 'list_string',
+      'settings' => [
+        'allowed_values' => _beantragt_content_page_key_allowed_values(),
+        'allowed_values_function' => '',
+      ],
+      'module' => 'options',
+      'cardinality' => 1,
+      'translatable' => FALSE,
+    ])->save();
+    $messages[] = 'Created node.field_page_key field storage.';
+  }
+  else {
+    $messages = array_merge($messages, _beantragt_content_ensure_allowed_values(
+      $entity_type_manager,
+      'node.field_page_key',
+      _beantragt_content_page_key_allowed_values(),
+    ));
+  }
+
+  if (!$field_storage->load('node.field_public_slug')) {
+    $field_storage->create([
+      'field_name' => 'field_public_slug',
+      'entity_type' => 'node',
+      'type' => 'string',
+      'settings' => [
+        'max_length' => 128,
+        'is_ascii' => TRUE,
+        'case_sensitive' => FALSE,
+      ],
+      'module' => 'core',
+      'cardinality' => 1,
+      'translatable' => TRUE,
+    ])->save();
+    $messages[] = 'Created node.field_public_slug field storage.';
+  }
+
+  if (!$field_storage->load('node.field_footer_visible')) {
+    $field_storage->create([
+      'field_name' => 'field_footer_visible',
+      'entity_type' => 'node',
+      'type' => 'boolean',
+      'settings' => [],
+      'module' => 'core',
+      'cardinality' => 1,
+      'translatable' => FALSE,
+    ])->save();
+    $messages[] = 'Created node.field_footer_visible field storage.';
+  }
+
+  if (!$field_storage->load('node.field_page_weight')) {
+    $field_storage->create([
+      'field_name' => 'field_page_weight',
+      'entity_type' => 'node',
+      'type' => 'integer',
+      'settings' => [
+        'unsigned' => FALSE,
+        'size' => 'normal',
+      ],
+      'module' => 'core',
+      'cardinality' => 1,
+      'translatable' => FALSE,
+    ])->save();
+    $messages[] = 'Created node.field_page_weight field storage.';
+  }
+
+  if (!$field_storage->load('node.field_boilerplate_type')) {
+    $field_storage->create([
+      'field_name' => 'field_boilerplate_type',
+      'entity_type' => 'node',
+      'type' => 'list_string',
+      'settings' => [
+        'allowed_values' => [
+          'status_notes' => 'Status notes',
+          'service_provider' => 'Service provider',
+          'remarks' => 'Remarks',
+        ],
+        'allowed_values_function' => '',
+      ],
+      'module' => 'options',
+      'cardinality' => 1,
+      'translatable' => FALSE,
+    ])->save();
+    $messages[] = 'Created node.field_boilerplate_type field storage.';
+  }
+
+  if (!$field_storage->load('node.field_public_document_file')) {
+    $field_storage->create([
+      'field_name' => 'field_public_document_file',
+      'entity_type' => 'node',
+      'type' => 'file',
+      'settings' => [
+        'target_type' => 'file',
+        'display_field' => FALSE,
+        'display_default' => FALSE,
+      ],
+      'module' => 'file',
+      'cardinality' => 1,
+      'translatable' => FALSE,
+    ])->save();
+    $messages[] = 'Created node.field_public_document_file field storage.';
+  }
+
+  if (!$field_storage->load('node.field_form_schema')) {
+    $field_storage->create([
+      'field_name' => 'field_form_schema',
+      'entity_type' => 'node',
+      'type' => 'entity_reference',
+      'settings' => [
+        'target_type' => 'form_schema',
+      ],
+      'module' => 'core',
+      'cardinality' => 1,
+      'translatable' => FALSE,
+    ])->save();
+    $messages[] = 'Created node.field_form_schema field storage.';
+  }
+
+  if (!$field_storage->load('node.field_content_placement')) {
+    $field_storage->create([
+      'field_name' => 'field_content_placement',
+      'entity_type' => 'node',
+      'type' => 'list_string',
+      'settings' => [
+        'allowed_values' => _beantragt_content_placement_allowed_values(),
+        'allowed_values_function' => '',
+      ],
+      'module' => 'options',
+      'cardinality' => 1,
+      'translatable' => FALSE,
+    ])->save();
+    $messages[] = 'Created node.field_content_placement field storage.';
+  }
+  else {
+    $messages = array_merge($messages, _beantragt_content_ensure_allowed_values(
+      $entity_type_manager,
+      'node.field_content_placement',
+      _beantragt_content_placement_allowed_values(),
+    ));
+  }
+
+  if (!$field_storage->load('node.field_content_weight')) {
+    $field_storage->create([
+      'field_name' => 'field_content_weight',
+      'entity_type' => 'node',
+      'type' => 'integer',
+      'settings' => [
+        'unsigned' => FALSE,
+        'size' => 'normal',
+      ],
+      'module' => 'core',
+      'cardinality' => 1,
+      'translatable' => FALSE,
+    ])->save();
+    $messages[] = 'Created node.field_content_weight field storage.';
+  }
+
+  return $messages;
+}
+
+/**
+ * Returns stable public page keys.
+ *
+ * @return array<string, string>
+ *   Allowed list_string values.
+ */
+function _beantragt_content_page_key_allowed_values(): array {
+  return [
+    'privacy' => 'Privacy policy',
+    'legal_notice' => 'Legal notice',
+    'accessibility' => 'Accessibility statement',
+    'easy_language' => 'Easy language',
+    'sign_language' => 'Sign language',
+    'content' => 'Content page',
+  ];
+}
+
+/**
+ * Returns public content placements.
+ *
+ * @return array<string, string>
+ *   Allowed list_string values.
+ */
+function _beantragt_content_placement_allowed_values(): array {
+  return [
+    'org_start' => 'Organisation start',
+    'form_intro' => 'Form intro',
+    'form_downloads' => 'Form downloads',
+    'form_sidebar' => 'Form sidebar',
+    'submission_success' => 'Submission success',
+  ];
+}
+
+/**
+ * Ensures an existing list_string field storage accepts the given values.
+ *
+ * @param array<string, string> $allowed_values
+ *   Canonical values to add or refresh.
+ *
+ * @return string[]
+ *   Human-readable changes.
+ */
+function _beantragt_content_ensure_allowed_values(
+  EntityTypeManagerInterface $entity_type_manager,
+  string $field_storage_id,
+  array $allowed_values,
+): array {
+  $storage = $entity_type_manager->getStorage('field_storage_config')->load($field_storage_id);
+  if (!$storage) {
+    return [];
+  }
+
+  $settings = $storage->get('settings') ?? [];
+  $current = is_array($settings['allowed_values'] ?? NULL)
+    ? $settings['allowed_values']
+    : [];
+  $merged = $allowed_values + array_diff_key($current, $allowed_values);
+  if ($current === $merged) {
+    return [];
+  }
+
+  $settings['allowed_values'] = $merged;
+  $storage->set('settings', $settings);
+  $storage->save();
+
+  return [sprintf('Updated %s allowed values.', $field_storage_id)];
+}
+
+/**
+ * Ensures page bundle fields exist.
+ *
+ * @return string[]
+ *   Human-readable changes.
+ */
+function _beantragt_content_ensure_page_fields(EntityTypeManagerInterface $entity_type_manager): array {
+  $messages = [];
+  $field_config = $entity_type_manager->getStorage('field_config');
+
+  if (!$field_config->load('node.page.body')) {
+    $field_config->create([
+      'field_name' => 'body',
+      'entity_type' => 'node',
+      'bundle' => 'page',
+      'label' => 'Body',
+      'required' => FALSE,
+      'translatable' => TRUE,
+      'settings' => [
+        'display_summary' => TRUE,
+        'required_summary' => FALSE,
+        'allowed_formats' => ['basic_html'],
+      ],
+    ])->save();
+    $messages[] = 'Added body to page.';
+  }
+  else {
+    $messages = array_merge($messages, _beantragt_content_restrict_body_formats($entity_type_manager, 'page'));
+  }
+
+  if (!$field_config->load('node.page.field_page_key')) {
+    $field_config->create([
+      'field_name' => 'field_page_key',
+      'entity_type' => 'node',
+      'bundle' => 'page',
+      'label' => 'Page key',
+      'description' => 'Stable machine key used by the public API, for example privacy or legal_notice.',
+      'required' => TRUE,
+      'translatable' => FALSE,
+    ])->save();
+    $messages[] = 'Added field_page_key to page.';
+  }
+
+  if (!$field_config->load('node.page.field_public_slug')) {
+    $field_config->create([
+      'field_name' => 'field_public_slug',
+      'entity_type' => 'node',
+      'bundle' => 'page',
+      'label' => 'Public slug',
+      'description' => 'Public route segment chosen by the jurisdiction, for example datenschutz, kontakt or privacy.',
+      'required' => FALSE,
+      'translatable' => TRUE,
+    ])->save();
+    $messages[] = 'Added field_public_slug to page.';
+  }
+
+  if (!$field_config->load('node.page.field_footer_visible')) {
+    $field_config->create([
+      'field_name' => 'field_footer_visible',
+      'entity_type' => 'node',
+      'bundle' => 'page',
+      'label' => 'Show in public footer',
+      'description' => 'When enabled, the public page list can be used for footer navigation.',
+      'required' => FALSE,
+      'translatable' => FALSE,
+      'default_value' => [['value' => 1]],
+    ])->save();
+    $messages[] = 'Added field_footer_visible to page.';
+  }
+
+  if (!$field_config->load('node.page.field_page_weight')) {
+    $field_config->create([
+      'field_name' => 'field_page_weight',
+      'entity_type' => 'node',
+      'bundle' => 'page',
+      'label' => 'Navigation weight',
+      'description' => 'Lower numbers appear earlier in public page lists.',
+      'required' => FALSE,
+      'translatable' => FALSE,
+      'default_value' => [['value' => 0]],
+    ])->save();
+    $messages[] = 'Added field_page_weight to page.';
+  }
+
+  if (!$field_config->load('node.page.field_jurisdiction')) {
+    $field_config->create([
+      'field_name' => 'field_jurisdiction',
+      'entity_type' => 'node',
+      'bundle' => 'page',
+      'label' => 'Jurisdiction',
+      'description' => 'The jurisdiction this page belongs to.',
+      'required' => FALSE,
+      'translatable' => FALSE,
+      'settings' => [
+        'handler' => 'default:group',
+        'handler_settings' => [
+          'target_bundles' => ['jur' => 'jur'],
+          'sort' => ['field' => 'label', 'direction' => 'ASC'],
+          'auto_create' => FALSE,
+        ],
+      ],
+    ])->save();
+    $messages[] = 'Added field_jurisdiction to page.';
+  }
+
+  if (!$field_config->load('node.page.field_organisation')) {
+    $field_config->create([
+      'field_name' => 'field_organisation',
+      'entity_type' => 'node',
+      'bundle' => 'page',
+      'label' => 'Organisation',
+      'description' => 'Limit this page to one organisation. Leave empty for all organisations in the jurisdiction.',
+      'required' => FALSE,
+      'translatable' => FALSE,
+      'settings' => [
+        'handler' => 'default:group',
+        'handler_settings' => [
+          'target_bundles' => ['org' => 'org'],
+          'sort' => ['field' => 'label', 'direction' => 'ASC'],
+          'auto_create' => FALSE,
+          'auto_create_bundle' => '',
+        ],
+      ],
+    ])->save();
+    $messages[] = 'Added field_organisation to page.';
+  }
+
+  return $messages;
+}
+
+/**
+ * Ensures boilerplate bundle fields exist.
+ *
+ * @return string[]
+ *   Human-readable changes.
+ */
+function _beantragt_content_ensure_boilerplate_fields(EntityTypeManagerInterface $entity_type_manager): array {
+  $messages = [];
+  $field_config = $entity_type_manager->getStorage('field_config');
+
+  if (!$field_config->load('node.boilerplate.body')) {
+    $field_config->create([
+      'field_name' => 'body',
+      'entity_type' => 'node',
+      'bundle' => 'boilerplate',
+      'label' => 'Body',
+      'required' => FALSE,
+      'translatable' => TRUE,
+      'settings' => [
+        'display_summary' => TRUE,
+        'required_summary' => FALSE,
+        'allowed_formats' => ['basic_html'],
+      ],
+    ])->save();
+    $messages[] = 'Added body to boilerplate.';
+  }
+  else {
+    $messages = array_merge($messages, _beantragt_content_restrict_body_formats($entity_type_manager, 'boilerplate'));
+  }
+
+  if (!$field_config->load('node.boilerplate.field_boilerplate_type')) {
+    $field_config->create([
+      'field_name' => 'field_boilerplate_type',
+      'entity_type' => 'node',
+      'bundle' => 'boilerplate',
+      'label' => 'Boilerplate type',
+      'description' => 'Determines where this boilerplate appears.',
+      'required' => TRUE,
+      'translatable' => FALSE,
+      'default_value' => [['value' => 'status_notes']],
+    ])->save();
+    $messages[] = 'Added field_boilerplate_type to boilerplate.';
+  }
+
+  if (!$field_config->load('node.boilerplate.field_jurisdiction')) {
+    $field_config->create([
+      'field_name' => 'field_jurisdiction',
+      'entity_type' => 'node',
+      'bundle' => 'boilerplate',
+      'label' => 'Jurisdiction',
+      'description' => 'The jurisdiction this boilerplate belongs to.',
+      'required' => FALSE,
+      'translatable' => FALSE,
+      'settings' => [
+        'handler' => 'default:group',
+        'handler_settings' => [
+          'target_bundles' => ['jur' => 'jur'],
+          'sort' => ['field' => 'label', 'direction' => 'ASC'],
+          'auto_create' => FALSE,
+        ],
+      ],
+    ])->save();
+    $messages[] = 'Added field_jurisdiction to boilerplate.';
+  }
+
+  if (!$field_config->load('node.boilerplate.field_organisation')) {
+    $field_config->create([
+      'field_name' => 'field_organisation',
+      'entity_type' => 'node',
+      'bundle' => 'boilerplate',
+      'label' => 'Organisation',
+      'description' => 'Limit this boilerplate to one organisation. Leave empty for all organisations in the jurisdiction.',
+      'required' => FALSE,
+      'translatable' => FALSE,
+      'settings' => [
+        'handler' => 'default:group',
+        'handler_settings' => [
+          'target_bundles' => ['org' => 'org'],
+          'sort' => ['field' => 'label', 'direction' => 'ASC'],
+          'auto_create' => FALSE,
+          'auto_create_bundle' => '',
+        ],
+      ],
+    ])->save();
+    $messages[] = 'Added field_organisation to boilerplate.';
+  }
+
+  return $messages;
+}
+
+/**
+ * Ensures public document bundle fields exist.
+ *
+ * @return string[]
+ *   Human-readable changes.
+ */
+function _beantragt_content_ensure_public_document_fields(EntityTypeManagerInterface $entity_type_manager): array {
+  $messages = [];
+  $field_config = $entity_type_manager->getStorage('field_config');
+
+  if (!$field_config->load('node.public_document.body')) {
+    $field_config->create([
+      'field_name' => 'body',
+      'entity_type' => 'node',
+      'bundle' => 'public_document',
+      'label' => 'Description',
+      'description' => 'Short public description shown next to the download.',
+      'required' => FALSE,
+      'translatable' => TRUE,
+      'settings' => [
+        'display_summary' => TRUE,
+        'required_summary' => FALSE,
+        'allowed_formats' => ['basic_html'],
+      ],
+    ])->save();
+    $messages[] = 'Added body to public_document.';
+  }
+  else {
+    $messages = array_merge($messages, _beantragt_content_restrict_body_formats($entity_type_manager, 'public_document'));
+  }
+
+  $public_document_file_config = $field_config->load('node.public_document.field_public_document_file');
+  if (!$public_document_file_config) {
+    $field_config->create([
+      'field_name' => 'field_public_document_file',
+      'entity_type' => 'node',
+      'bundle' => 'public_document',
+      'label' => 'Public file',
+      'description' => 'Editorial public file. Do not use for citizen submission attachments.',
+      'required' => TRUE,
+      'translatable' => FALSE,
+      'settings' => [
+        'file_directory' => 'public_documents',
+        'file_extensions' => 'pdf jpg jpeg png',
+        'max_filesize' => '20 MB',
+        'uri_scheme' => 'private',
+        'description_field' => FALSE,
+        'handler' => 'default:file',
+        'handler_settings' => [],
+      ],
+    ])->save();
+    $messages[] = 'Added field_public_document_file to public_document.';
+  }
+  elseif ($public_document_file_config->getSetting('uri_scheme') !== 'private') {
+    $public_document_file_config->setSetting('uri_scheme', 'private');
+    $public_document_file_config->save();
+    $messages[] = 'Changed public document file storage to private.';
+  }
+
+  if (!$field_config->load('node.public_document.field_jurisdiction')) {
+    $field_config->create([
+      'field_name' => 'field_jurisdiction',
+      'entity_type' => 'node',
+      'bundle' => 'public_document',
+      'label' => 'Jurisdiction',
+      'description' => 'The jurisdiction this public document belongs to.',
+      'required' => FALSE,
+      'translatable' => FALSE,
+      'settings' => [
+        'handler' => 'default:group',
+        'handler_settings' => [
+          'target_bundles' => ['jur' => 'jur'],
+          'sort' => ['field' => 'label', 'direction' => 'ASC'],
+          'auto_create' => FALSE,
+        ],
+      ],
+    ])->save();
+    $messages[] = 'Added field_jurisdiction to public_document.';
+  }
+
+  if (!$field_config->load('node.public_document.field_organisation')) {
+    $field_config->create([
+      'field_name' => 'field_organisation',
+      'entity_type' => 'node',
+      'bundle' => 'public_document',
+      'label' => 'Organisation',
+      'description' => 'Limit this public document to one organisation. Leave empty for all organisations in the jurisdiction.',
+      'required' => FALSE,
+      'translatable' => FALSE,
+      'settings' => [
+        'handler' => 'default:group',
+        'handler_settings' => [
+          'target_bundles' => ['org' => 'org'],
+          'sort' => ['field' => 'label', 'direction' => 'ASC'],
+          'auto_create' => FALSE,
+          'auto_create_bundle' => '',
+        ],
+      ],
+    ])->save();
+    $messages[] = 'Added field_organisation to public_document.';
+  }
+
+  if (!$field_config->load('node.public_document.field_form_schema')) {
+    $field_config->create([
+      'field_name' => 'field_form_schema',
+      'entity_type' => 'node',
+      'bundle' => 'public_document',
+      'label' => 'Form schema',
+      'description' => 'Optional form this document belongs to. Leave empty for workspace-wide documents.',
+      'required' => FALSE,
+      'translatable' => FALSE,
+      'settings' => [
+        'handler' => 'default:form_schema',
+        'handler_settings' => [
+          'auto_create' => FALSE,
+        ],
+      ],
+    ])->save();
+    $messages[] = 'Added field_form_schema to public_document.';
+  }
+
+  if (!$field_config->load('node.public_document.field_content_placement')) {
+    $field_config->create([
+      'field_name' => 'field_content_placement',
+      'entity_type' => 'node',
+      'bundle' => 'public_document',
+      'label' => 'Placement',
+      'description' => 'Where this public document may be shown.',
+      'required' => TRUE,
+      'translatable' => FALSE,
+      'default_value' => [['value' => 'form_downloads']],
+    ])->save();
+    $messages[] = 'Added field_content_placement to public_document.';
+  }
+
+  if (!$field_config->load('node.public_document.field_content_weight')) {
+    $field_config->create([
+      'field_name' => 'field_content_weight',
+      'entity_type' => 'node',
+      'bundle' => 'public_document',
+      'label' => 'Sort weight',
+      'description' => 'Lower numbers appear earlier in public document lists.',
+      'required' => FALSE,
+      'translatable' => FALSE,
+      'default_value' => [['value' => 0]],
+    ])->save();
+    $messages[] = 'Added field_content_weight to public_document.';
+  }
+
+  return $messages;
+}
+
+/**
+ * Ensures public content-section bundle fields exist.
+ *
+ * @return string[]
+ *   Human-readable changes.
+ */
+function _beantragt_content_ensure_content_section_fields(EntityTypeManagerInterface $entity_type_manager): array {
+  $messages = [];
+  $field_config = $entity_type_manager->getStorage('field_config');
+
+  if (!$field_config->load('node.content_section.body')) {
+    $field_config->create([
+      'field_name' => 'body',
+      'entity_type' => 'node',
+      'bundle' => 'content_section',
+      'label' => 'Body',
+      'description' => 'Public HTML rendered at the selected placement.',
+      'required' => FALSE,
+      'translatable' => TRUE,
+      'settings' => [
+        'display_summary' => TRUE,
+        'required_summary' => FALSE,
+        'allowed_formats' => ['basic_html'],
+      ],
+    ])->save();
+    $messages[] = 'Added body to content_section.';
+  }
+  else {
+    $messages = array_merge($messages, _beantragt_content_restrict_body_formats($entity_type_manager, 'content_section'));
+  }
+
+  if (!$field_config->load('node.content_section.field_jurisdiction')) {
+    $field_config->create([
+      'field_name' => 'field_jurisdiction',
+      'entity_type' => 'node',
+      'bundle' => 'content_section',
+      'label' => 'Jurisdiction',
+      'description' => 'The jurisdiction this content section belongs to.',
+      'required' => FALSE,
+      'translatable' => FALSE,
+      'settings' => [
+        'handler' => 'default:group',
+        'handler_settings' => [
+          'target_bundles' => ['jur' => 'jur'],
+          'sort' => ['field' => 'label', 'direction' => 'ASC'],
+          'auto_create' => FALSE,
+        ],
+      ],
+    ])->save();
+    $messages[] = 'Added field_jurisdiction to content_section.';
+  }
+
+  if (!$field_config->load('node.content_section.field_organisation')) {
+    $field_config->create([
+      'field_name' => 'field_organisation',
+      'entity_type' => 'node',
+      'bundle' => 'content_section',
+      'label' => 'Organisation',
+      'description' => 'Limit this content section to one organisation. Leave empty for all organisations in the jurisdiction.',
+      'required' => FALSE,
+      'translatable' => FALSE,
+      'settings' => [
+        'handler' => 'default:group',
+        'handler_settings' => [
+          'target_bundles' => ['org' => 'org'],
+          'sort' => ['field' => 'label', 'direction' => 'ASC'],
+          'auto_create' => FALSE,
+          'auto_create_bundle' => '',
+        ],
+      ],
+    ])->save();
+    $messages[] = 'Added field_organisation to content_section.';
+  }
+
+  if (!$field_config->load('node.content_section.field_form_schema')) {
+    $field_config->create([
+      'field_name' => 'field_form_schema',
+      'entity_type' => 'node',
+      'bundle' => 'content_section',
+      'label' => 'Form schema',
+      'description' => 'Optional form this content section belongs to. Leave empty for workspace-wide sections.',
+      'required' => FALSE,
+      'translatable' => FALSE,
+      'settings' => [
+        'handler' => 'default:form_schema',
+        'handler_settings' => [
+          'auto_create' => FALSE,
+        ],
+      ],
+    ])->save();
+    $messages[] = 'Added field_form_schema to content_section.';
+  }
+
+  if (!$field_config->load('node.content_section.field_content_placement')) {
+    $field_config->create([
+      'field_name' => 'field_content_placement',
+      'entity_type' => 'node',
+      'bundle' => 'content_section',
+      'label' => 'Placement',
+      'description' => 'Where this content section may be shown.',
+      'required' => TRUE,
+      'translatable' => FALSE,
+      'default_value' => [['value' => 'form_intro']],
+    ])->save();
+    $messages[] = 'Added field_content_placement to content_section.';
+  }
+
+  if (!$field_config->load('node.content_section.field_content_weight')) {
+    $field_config->create([
+      'field_name' => 'field_content_weight',
+      'entity_type' => 'node',
+      'bundle' => 'content_section',
+      'label' => 'Sort weight',
+      'description' => 'Lower numbers appear earlier in public content-section lists.',
+      'required' => FALSE,
+      'translatable' => FALSE,
+      'default_value' => [['value' => 0]],
+    ])->save();
+    $messages[] = 'Added field_content_weight to content_section.';
+  }
+
+  return $messages;
+}
+
+/**
+ * Restricts a node bundle body field to sanitized basic HTML.
+ *
+ * @return string[]
+ *   Human-readable changes.
+ */
+function _beantragt_content_restrict_body_formats(EntityTypeManagerInterface $entity_type_manager, string $bundle): array {
+  $field = $entity_type_manager->getStorage('field_config')->load('node.' . $bundle . '.body');
+  if (!$field instanceof FieldConfigInterface) {
+    return [];
+  }
+
+  $settings = $field->get('settings') ?? [];
+  if (($settings['allowed_formats'] ?? NULL) === ['basic_html']) {
+    return [];
+  }
+
+  $settings['allowed_formats'] = ['basic_html'];
+  $field->set('settings', $settings);
+  $field->save();
+
+  return [sprintf('Restricted %s body to basic_html.', $bundle)];
+}
+
+/**
+ * Seeds the example content for Musterstadt when explicitly enabled.
+ *
+ * @return string[]
+ *   Human-readable changes.
+ */
+function _beantragt_content_seed_demo_content(
+  EntityTypeManagerInterface $entity_type_manager,
+  bool $local_example = FALSE,
+): array {
+  if (getenv('BEANTRAGT_ALLOW_CONTENT_DEMO_SEED') !== '1') {
+    return ['Skipped demo content seed because BEANTRAGT_ALLOW_CONTENT_DEMO_SEED is not 1.'];
+  }
+
+  $messages = [];
+  $jurisdiction = _beantragt_content_find_group_by_slug('jur', 'musterstadt');
+  if (!$jurisdiction instanceof GroupInterface) {
+    return ['Skipped content seed because Musterstadt jurisdiction is missing.'];
+  }
+
+  $messages[] = _beantragt_content_ensure_page(
+    $entity_type_manager,
+    $jurisdiction,
+    'accessibility',
+    'barrierefreiheit',
+    'Barrierefreiheitserklärung',
+    <<<'HTML'
+    <p>Musterstadt ist eine fiktive Beispielinstallation zum Ausprobieren von Online-Anträgen.</p>
+    <p>Eine Prüfung der Barrierefreiheit dieser Installation liegt nicht vor. Informationen zum Einstieg finden Sie unter <a href="/musterstadt/pages/leichte-sprache">Informationen in Leichter Sprache</a>.</p>
+    <p>Wenden Sie sich bei Fragen zur Barrierefreiheit an die Betreiberin oder den Betreiber Ihrer Installation.</p>
+    HTML,
+    'accessibility',
+    'Accessibility statement',
+    <<<'HTML'
+    <p>Musterstadt is a fictional example installation for trying online applications.</p>
+    <p>The accessibility of this installation has not been assessed. See the <a href="/musterstadt/pages/easy-language?lang=en">information in easy language</a> for help getting started.</p>
+    <p>Contact the operator of your installation with accessibility questions.</p>
+    HTML,
+    30,
+    preserve_existing: TRUE,
+  );
+
+  $messages[] = _beantragt_content_ensure_page(
+    $entity_type_manager,
+    $jurisdiction,
+    'easy_language',
+    'leichte-sprache',
+    'Informationen in Leichter Sprache',
+    <<<'HTML'
+    <p>Musterstadt ist eine erfundene Stadt.<br>Auf dieser Seite können Sie Anträge üben.</p>
+    <h2>So stellen Sie einen Antrag</h2>
+    <p>Wählen Sie ein Formular aus.<br>Füllen Sie die Felder aus.<br>Manchmal braucht das Formular Dateien.<br>Laden Sie diese Dateien hoch.<br>Senden Sie den Antrag ab.</p>
+    <p>Sie bekommen ein Aktenzeichen.<br>Das Aktenzeichen ist eine Nummer für Ihren Antrag.<br>Mit der Nummer können Sie nachsehen, was mit Ihrem Antrag passiert.</p>
+    <h2>Hilfe bei Problemen mit der Seite</h2>
+    <p>Manche Teile der Seite sind schwer zu benutzen.<br>Zum Beispiel können Vorlese-Programme manche Dateien nicht vorlesen.<br>Mehr dazu steht in der <a href="/musterstadt/pages/barrierefreiheit">Erklärung zur Barriere-Freiheit</a>.</p>
+    <p>Haben Sie ein Problem mit der Seite?<br>Fragen Sie die Person, die diese Seite für Sie bereitstellt.<br>Schreiben Sie, auf welcher Seite das Problem ist.</p>
+    HTML,
+    'easy-language',
+    'Easy-Language Information',
+    <<<'HTML'
+    <p>Musterstadt is a fictional town.<br>You can practise sending applications on this website.</p>
+    <h2>How to send an application</h2>
+    <p>Choose a form.<br>Fill in the fields.<br>Some forms ask for files.<br>Upload the files the form asks for.<br>Send the application.</p>
+    <p>You get a reference number.<br>This is a number for your application.<br>Use it to check what happens to your application.</p>
+    <h2>Help with using the website</h2>
+    <p>Some parts of the site are hard to use.<br>For example, screen readers cannot read some files aloud.<br>Find out more in the <a href="/musterstadt/pages/accessibility?lang=en">accessibility statement</a>.</p>
+    <p>Do you have a problem using the website?<br>Ask the person who runs this site for you.<br>Tell us which page you had trouble using.</p>
+    HTML,
+    40,
+  );
+
+  $messages[] = _beantragt_content_ensure_page(
+    $entity_type_manager,
+    $jurisdiction,
+    'sign_language',
+    'gebaerdensprache',
+    'Informationen in Gebärdensprache',
+    <<<'HTML'
+    <p><strong>Die Beispielinstallation Musterstadt enthält kein Video in Deutscher Gebärdensprache (DGS).</strong></p>
+    <p>In der Beispielinstallation können Sie Online-Anträge in einer erfundenen Stadt ausprobieren. Die <a href="/musterstadt/pages/leichte-sprache">Informationen in Leichter Sprache</a> erklären den Einstieg in Textform. In der <a href="/musterstadt/pages/barrierefreiheit">Barrierefreiheitserklärung</a> stehen die bekannten Barrieren und der Kontakt, an den Sie sich bei Fragen wenden können.</p>
+    HTML,
+    'sign-language',
+    'Sign-Language Information',
+    <<<'HTML'
+    <p><strong>The Musterstadt example has no video in German Sign Language (DGS).</strong></p>
+    <p>The example lets you try online applications in a fictional town. The <a href="/musterstadt/pages/easy-language?lang=en">information in easy language</a> is a written guide to getting started. The <a href="/musterstadt/pages/accessibility?lang=en">accessibility statement</a> describes known barriers and tells you who to contact if you have questions.</p>
+    HTML,
+    50,
+  );
+
+  $organisation = _beantragt_content_find_group_by_slug('org', 'citizen-services');
+  if (!$organisation instanceof GroupInterface
+    || !$organisation->hasField('field_jurisdiction')
+    || (int) ($organisation->get('field_jurisdiction')->target_id ?? 0) !== (int) $jurisdiction->id()) {
+    $organisation = NULL;
+  }
+  // The local installation has multiple published forms in the Bürgerbüro.
+  // Its general guidance belongs to the office, independent of form revisions.
+  $form_schema = $local_example ? NULL : _beantragt_content_find_demo_form_schema($entity_type_manager, $jurisdiction, $organisation);
+  $messages[] = _beantragt_content_ensure_public_document(
+    $entity_type_manager,
+    $jurisdiction,
+    $organisation,
+    $form_schema instanceof EntityInterface ? $form_schema : NULL,
+    'Merkblatt Antragstellung Musterstadt',
+    '<p>Allgemeine Hinweise zur Antragstellung im Bürgerbüro.</p>',
+    'Musterstadt Application Leaflet',
+    '<p>General notes on applying at the citizen services office.</p>',
+    'form_sidebar',
+  );
+
+  $messages[] = _beantragt_content_ensure_public_document(
+    $entity_type_manager,
+    $jurisdiction,
+    $organisation,
+    $form_schema instanceof EntityInterface ? $form_schema : NULL,
+    'Nachreichungshinweise Musterstadt',
+    '<p>So reichen Sie fehlende Unterlagen nach dem Absenden nach.</p>',
+    'Musterstadt Follow-up Notes',
+    '<p>How to send missing documents after you have submitted your application.</p>',
+    'submission_success',
+    20,
+  );
+
+  $messages[] = _beantragt_content_ensure_content_section(
+    $entity_type_manager,
+    $jurisdiction,
+    $organisation,
+    NULL,
+    'Willkommen im Bürgerbüro',
+    '<p>Hier finden Sie die Online-Anträge des Bürgerbüros Musterstadt. Wählen Sie ein Verfahren aus.</p>',
+    'Welcome to the Citizen Office',
+    '<p>Here you can find the online applications of the Musterstadt citizen office. Choose a procedure.</p>',
+    'org_start',
+    10,
+  );
+
+  $messages[] = _beantragt_content_ensure_content_section(
+    $entity_type_manager,
+    $jurisdiction,
+    $organisation,
+    $form_schema instanceof EntityInterface ? $form_schema : NULL,
+    'Vor dem Ausfüllen',
+    '<p>Bitte halten Sie Ihre Kontaktdaten und, falls vorhanden, passende Nachweise als PDF, JPG oder PNG bereit.</p>',
+    'Before You Start',
+    '<p>Please keep your contact details and, if available, supporting documents as PDF, JPG or PNG ready.</p>',
+    'form_intro',
+    10,
+  );
+
+  $messages[] = _beantragt_content_ensure_content_section(
+    $entity_type_manager,
+    $jurisdiction,
+    $organisation,
+    $form_schema instanceof EntityInterface ? $form_schema : NULL,
+    'Fragen zum Antrag',
+    '<p>Rückfragen zu Ihrem Antrag stellen Sie bitte über den Statusbereich.</p>',
+    'Questions About Your Application',
+    '<p>Please use the status area for questions about your application.</p>',
+    'form_sidebar',
+    20,
+    ['Bearbeitungszeit und Kontakt', 'Processing Time and Contact'],
+  );
+
+  $messages[] = _beantragt_content_ensure_content_section(
+    $entity_type_manager,
+    $jurisdiction,
+    $organisation,
+    $form_schema instanceof EntityInterface ? $form_schema : NULL,
+    'Nach der Einreichung',
+    '<p>Sie erhalten ein Aktenzeichen. Bewahren Sie es auf, damit Sie den Status des Vorgangs wiederfinden.</p>',
+    'After Submission',
+    '<p>You receive a reference number. Keep it so you can find the case status again later.</p>',
+    'submission_success',
+    30,
+  );
+
+  $messages[] = _beantragt_content_ensure_boilerplate(
+    $entity_type_manager,
+    $jurisdiction,
+    '000 Eingang bestätigen',
+    'Ihr Anliegen ist eingegangen. Wir prüfen Zuständigkeit und Bearbeitungsweg und melden uns, falls Rückfragen entstehen.',
+    '000 Confirm receipt',
+    'Your request has been received. We will review responsibility and the next handling steps and contact you if we have questions.',
+    ['000 Eingang bestaetigen'],
+  );
+
+  $messages[] = _beantragt_content_ensure_boilerplate(
+    $entity_type_manager,
+    $jurisdiction,
+    '010 Zuständigkeit und Bearbeitungsweg geklärt',
+    'Die zuständige Dienststelle und der weitere Bearbeitungsweg stehen fest. Der Vorgang geht jetzt in die passende Bearbeitung.',
+    '010 Responsibility and handling route confirmed',
+    'The responsible office and next handling steps are clear. The case now moves into the appropriate processing step.',
+  );
+
+  $messages[] = _beantragt_content_ensure_boilerplate(
+    $entity_type_manager,
+    $jurisdiction,
+    '020 Rückfrage: Angaben ergänzen',
+    'Zur weiteren Bearbeitung benötigen wir noch Angaben oder Unterlagen. Bitte ergänzen Sie die genannten Punkte über den Statusbereich.',
+    '020 Follow-up information required',
+    'We need additional information to continue. Please submit the requested details through the status area.',
+    ['010 Rueckfrage erforderlich', '020 Nachforderung: fehlende Unterlagen'],
+  );
+
+  $messages[] = _beantragt_content_ensure_boilerplate(
+    $entity_type_manager,
+    $jurisdiction,
+    '030 Rückfrage fachliche Prüfung',
+    'Bei der fachlichen Prüfung ist eine Rückfrage entstanden. Bitte ergänzen Sie die unten genannten Informationen.',
+    '030 Subject-matter question',
+    'A question came up during subject-matter review. Please add the information listed below.',
+  );
+
+  $messages[] = _beantragt_content_ensure_boilerplate(
+    $entity_type_manager,
+    $jurisdiction,
+    '040 Positive Rückmeldung mit Hinweisen',
+    'Der Vorgang kann positiv abgeschlossen werden. Bitte beachten Sie die genannten Hinweise oder Auflagen.',
+    '040 Positive response with notes',
+    'The case can be closed positively. Please note the listed information or conditions.',
+    ['040 Freigabe mit Auflagen'],
+  );
+
+  $messages[] = _beantragt_content_ensure_boilerplate(
+    $entity_type_manager,
+    $jurisdiction,
+    '050 Negative Rückmeldung begründen',
+    'Der Vorgang kann auf Grundlage der vorliegenden Angaben nicht positiv abgeschlossen werden. Die Begründung ist unten dokumentiert.',
+    '050 Negative response rationale',
+    'The case cannot be closed positively based on the submitted information. The rationale is documented below.',
+    ['050 Ablehnung begründen'],
+  );
+
+  $messages[] = _beantragt_content_ensure_boilerplate(
+    $entity_type_manager,
+    $jurisdiction,
+    '060 Anliegen zurückgezogen',
+    'Das Anliegen wurde zurückgezogen. Der Vorgang wird ohne weitere Bearbeitung geschlossen.',
+    '060 Request withdrawn',
+    'The request has been withdrawn. The case will be closed without further processing.',
+    ['060 Antrag zurückgezogen'],
+  );
+
+  return array_values(array_filter($messages));
+}
+
+/**
+ * Finds one group by slug.
+ */
+function _beantragt_content_find_group_by_slug(string $bundle, string $slug): ?GroupInterface {
+  $groups = \Drupal::entityTypeManager()->getStorage('group')->loadByProperties([
+    'type' => $bundle,
+    'field_slug' => $slug,
+  ]);
+  $group = reset($groups);
+
+  return $group instanceof GroupInterface ? $group : NULL;
+}
+
+/**
+ * Ensures one jurisdiction-scoped page exists.
+ */
+function _beantragt_content_ensure_page(
+  EntityTypeManagerInterface $entity_type_manager,
+  GroupInterface $jurisdiction,
+  string $key,
+  string $de_slug,
+  string $de_title,
+  string $de_body,
+  string $en_slug,
+  string $en_title,
+  string $en_body,
+  int $weight,
+  bool $footer_visible = TRUE,
+  bool $preserve_existing = FALSE,
+): string {
+  $node = _beantragt_content_find_node($entity_type_manager, 'page', $jurisdiction, 'field_page_key', $key, TRUE);
+  if ($preserve_existing && $node instanceof NodeInterface) {
+    return '';
+  }
+  if (!$node instanceof NodeInterface) {
+    $node = $entity_type_manager->getStorage('node')->create([
+      'type' => 'page',
+      'langcode' => _beantragt_content_source_langcode(),
+      'status' => 1,
+    ]);
+  }
+
+  _beantragt_content_set_localized_body($node, $de_title, $de_body, $en_title, $en_body);
+  _beantragt_content_set_localized_public_slug($node, $de_slug, $en_slug);
+  if ($node->hasField('field_page_key')) {
+    $node->set('field_page_key', $key);
+  }
+  if ($node->hasField('field_footer_visible')) {
+    $node->set('field_footer_visible', (int) $footer_visible);
+  }
+  if ($node->hasField('field_page_weight')) {
+    $node->set('field_page_weight', $weight);
+  }
+  if ($node->hasField('field_jurisdiction')) {
+    $node->set('field_jurisdiction', ['target_id' => $jurisdiction->id()]);
+  }
+  return _beantragt_content_save_demo_node($node, 'page', $key);
+}
+
+/**
+ * Ensures one public demo document exists.
+ */
+function _beantragt_content_ensure_public_document(
+  EntityTypeManagerInterface $entity_type_manager,
+  GroupInterface $jurisdiction,
+  ?GroupInterface $organisation,
+  ?EntityInterface $form_schema,
+  string $de_title,
+  string $de_body,
+  string $en_title,
+  string $en_body,
+  string $placement = 'form_downloads',
+  int $weight = 10,
+): string {
+  $file = _beantragt_content_ensure_demo_public_document_file($entity_type_manager);
+  if (!$file instanceof FileInterface) {
+    return 'Skipped public document because demo file could not be created.';
+  }
+
+  $titles = [$de_title, $en_title];
+  $node = _beantragt_content_find_node_by_titles($entity_type_manager, 'public_document', $jurisdiction, $titles);
+  if (!$node instanceof NodeInterface) {
+    $node = $entity_type_manager->getStorage('node')->create([
+      'type' => 'public_document',
+      'langcode' => _beantragt_content_source_langcode(),
+      'status' => 1,
+    ]);
+  }
+
+  _beantragt_content_set_localized_body($node, $de_title, $de_body, $en_title, $en_body);
+  if ($node->hasField('field_public_document_file')) {
+    $node->set('field_public_document_file', ['target_id' => $file->id()]);
+  }
+  if ($node->hasField('field_jurisdiction')) {
+    $node->set('field_jurisdiction', ['target_id' => $jurisdiction->id()]);
+  }
+  if ($node->hasField('field_organisation')) {
+    $node->set('field_organisation', $organisation instanceof GroupInterface ? ['target_id' => $organisation->id()] : NULL);
+  }
+  if ($node->hasField('field_form_schema')) {
+    $node->set('field_form_schema', $form_schema instanceof EntityInterface ? ['target_id' => $form_schema->id()] : NULL);
+  }
+  if ($node->hasField('field_content_placement')) {
+    $node->set('field_content_placement', $placement);
+  }
+  if ($node->hasField('field_content_weight')) {
+    $node->set('field_content_weight', $weight);
+  }
+  return _beantragt_content_save_demo_node($node, 'public document', $de_title);
+}
+
+/**
+ * Ensures one public demo content section exists.
+ */
+function _beantragt_content_ensure_content_section(
+  EntityTypeManagerInterface $entity_type_manager,
+  GroupInterface $jurisdiction,
+  ?GroupInterface $organisation,
+  ?EntityInterface $form_schema,
+  string $de_title,
+  string $de_body,
+  string $en_title,
+  string $en_body,
+  string $placement,
+  int $weight,
+  array $legacy_titles = [],
+): string {
+  $titles = [$de_title, $en_title, ...$legacy_titles];
+  $node = _beantragt_content_find_node_by_titles($entity_type_manager, 'content_section', $jurisdiction, $titles);
+  if (!$node instanceof NodeInterface) {
+    $node = $entity_type_manager->getStorage('node')->create([
+      'type' => 'content_section',
+      'langcode' => _beantragt_content_source_langcode(),
+      'status' => 1,
+    ]);
+  }
+
+  _beantragt_content_set_localized_body($node, $de_title, $de_body, $en_title, $en_body);
+  if ($node->hasField('field_jurisdiction')) {
+    $node->set('field_jurisdiction', ['target_id' => $jurisdiction->id()]);
+  }
+  if ($node->hasField('field_organisation')) {
+    $node->set('field_organisation', $organisation instanceof GroupInterface ? ['target_id' => $organisation->id()] : NULL);
+  }
+  if ($node->hasField('field_form_schema')) {
+    $node->set('field_form_schema', $form_schema instanceof EntityInterface ? ['target_id' => $form_schema->id()] : NULL);
+  }
+  if ($node->hasField('field_content_placement')) {
+    $node->set('field_content_placement', $placement);
+  }
+  if ($node->hasField('field_content_weight')) {
+    $node->set('field_content_weight', $weight);
+  }
+  return _beantragt_content_save_demo_node($node, 'content section', $de_title);
+}
+
+/**
+ * Finds a suitable published internet demo form schema.
+ */
+function _beantragt_content_find_demo_form_schema(
+  EntityTypeManagerInterface $entity_type_manager,
+  GroupInterface $jurisdiction,
+  ?GroupInterface $organisation,
+): ?EntityInterface {
+  if (!$entity_type_manager->hasDefinition('form_schema')) {
+    return NULL;
+  }
+
+  $storage = $entity_type_manager->getStorage('form_schema');
+  $build_query = static function (?string $label_prefix) use ($storage, $jurisdiction, $organisation): QueryInterface {
+    $query = $storage->getQuery()
+      ->accessCheck(FALSE)
+      ->condition('status', 1)
+      ->condition('field_workflow_status', 'published')
+      ->condition('field_publication_scope', 'internet')
+      ->condition('field_jurisdiction.target_id', (int) $jurisdiction->id())
+      ->sort('changed', 'DESC')
+      ->range(0, 1);
+    if ($organisation instanceof GroupInterface) {
+      $query->condition('field_organisation.target_id', (int) $organisation->id());
+    }
+    if ($label_prefix !== NULL) {
+      $query->condition('label', $label_prefix . '%', 'LIKE');
+    }
+    return $query;
+  };
+
+  $ids = $build_query('Smoke Antrag:')->execute();
+  if (!$ids) {
+    $ids = $build_query(NULL)->execute();
+  }
+  if (!$ids) {
+    return NULL;
+  }
+
+  $entity = $storage->load((string) reset($ids));
+
+  return $entity instanceof EntityInterface ? $entity : NULL;
+}
+
+/**
+ * Ensures the local public demo PDF exists as a private file entity.
+ */
+function _beantragt_content_ensure_demo_public_document_file(EntityTypeManagerInterface $entity_type_manager): ?FileInterface {
+  $uri = 'private://public_documents/musterstadt-merkblatt.pdf';
+  $file_storage = $entity_type_manager->getStorage('file');
+  $existing = $file_storage->loadByProperties(['uri' => $uri]);
+  $file = reset($existing);
+  if ($file instanceof FileInterface) {
+    return $file;
+  }
+
+  /** @var \Drupal\Core\File\FileSystemInterface $file_system */
+  $file_system = \Drupal::service('file_system');
+  $directory = 'private://public_documents';
+  if (!$file_system->prepareDirectory($directory, FileSystemInterface::CREATE_DIRECTORY | FileSystemInterface::MODIFY_PERMISSIONS)) {
+    return NULL;
+  }
+
+  $content_stream = 'BT /F1 12 Tf 24 96 Td (Merkblatt Antragstellung Musterstadt) Tj'
+    . " 0 -18 Td (Halten Sie die im Formular genannten) Tj 0 -14 Td (Unterlagen bereit.) Tj ET\n";
+  $objects = [
+    "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n",
+    "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n",
+    "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 360 144] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >> endobj\n",
+    sprintf("4 0 obj << /Length %d >> stream\n%sendstream endobj\n", strlen($content_stream), $content_stream),
+    "5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >> endobj\n",
+  ];
+  $pdf = "%PDF-1.4\n";
+  $offsets = [];
+  foreach ($objects as $object) {
+    $offsets[] = strlen($pdf);
+    $pdf .= $object;
+  }
+  $xref_offset = strlen($pdf);
+  $pdf .= sprintf("xref\n0 %d\n0000000000 65535 f \n", count($objects) + 1);
+  foreach ($offsets as $offset) {
+    $pdf .= sprintf("%010d 00000 n \n", $offset);
+  }
+  $pdf .= sprintf(
+    "trailer << /Root 1 0 R /Size %d >>\nstartxref\n%d\n%%%%EOF\n",
+    count($objects) + 1,
+    $xref_offset,
+  );
+
+  $repository = \Drupal::service('file.repository');
+  $file = $repository->writeData($pdf, $uri, FileExists::Replace);
+  $file->setPermanent();
+  $file->save();
+
+  return $file;
+}
+
+/**
+ * Migrates referenced public document files from public:// to private://.
+ *
+ * @return string[]
+ *   Human-readable changes.
+ */
+function _beantragt_content_migrate_public_document_files_to_private(EntityTypeManagerInterface $entity_type_manager): array {
+  $messages = [];
+  if (!$entity_type_manager->hasDefinition('node')) {
+    return $messages;
+  }
+
+  $node_storage = $entity_type_manager->getStorage('node');
+  $ids = $node_storage->getQuery()
+    ->accessCheck(FALSE)
+    ->condition('type', 'public_document')
+    ->exists('field_public_document_file')
+    ->execute();
+  if (!$ids) {
+    return $messages;
+  }
+
+  /** @var \Drupal\Core\File\FileSystemInterface $file_system */
+  $file_system = \Drupal::service('file_system');
+  $directory = 'private://public_documents';
+  if (!$file_system->prepareDirectory($directory, FileSystemInterface::CREATE_DIRECTORY | FileSystemInterface::MODIFY_PERMISSIONS)) {
+    return ['Skipped public document file migration because private directory could not be prepared.'];
+  }
+
+  $file_storage = $entity_type_manager->getStorage('file');
+  $repository = \Drupal::service('file.repository');
+  $migrated = 0;
+  /** @var \Drupal\node\NodeInterface[] $nodes */
+  $nodes = $node_storage->loadMultiple($ids);
+  foreach ($nodes as $node) {
+    if (!$node->hasField('field_public_document_file') || $node->get('field_public_document_file')->isEmpty()) {
+      continue;
+    }
+    $file = $node->get('field_public_document_file')->entity ?? NULL;
+    if (!$file instanceof FileInterface) {
+      continue;
+    }
+    $uri = (string) $file->getFileUri();
+    if (!str_starts_with($uri, 'public://public_documents/')) {
+      continue;
+    }
+    $filename = basename(substr($uri, strlen('public://public_documents/')));
+    if ($filename === '' || str_contains($filename, '/') || str_contains($filename, '\\') || str_contains($filename, '..')) {
+      continue;
+    }
+    $data = @file_get_contents($uri);
+    if (!is_string($data) || $data === '') {
+      continue;
+    }
+    $new_file = $repository->writeData($data, $directory . '/' . $filename, FileExists::Rename);
+    $new_file->setPermanent();
+    $new_file->setOwnerId((int) $file->getOwnerId());
+    $new_file->save();
+    $node->set('field_public_document_file', ['target_id' => $new_file->id()]);
+    $node->save();
+    try {
+      $file->delete();
+    }
+    catch (\Throwable) {
+      // The node no longer references the public file. Ignore cleanup failures.
+    }
+    $migrated++;
+  }
+
+  if ($migrated > 0) {
+    $messages[] = sprintf('Migrated %d public document file(s) to private storage.', $migrated);
+  }
+
+  $legacy = $file_storage->loadByProperties(['uri' => 'public://public_documents/musterstadt-merkblatt.pdf']);
+  foreach ($legacy as $file) {
+    try {
+      $file->delete();
+    }
+    catch (\Throwable) {
+      // Best-effort cleanup for old demo artifacts.
+    }
+  }
+
+  return $messages;
+}
+
+/**
+ * Ensures one jurisdiction-scoped status-note boilerplate exists.
+ */
+function _beantragt_content_ensure_boilerplate(
+  EntityTypeManagerInterface $entity_type_manager,
+  GroupInterface $jurisdiction,
+  string $de_title,
+  string $de_body,
+  string $en_title,
+  string $en_body,
+  array $legacy_titles = [],
+): string {
+  $node = _beantragt_content_find_node_by_titles($entity_type_manager, 'boilerplate', $jurisdiction, array_values(array_unique([
+    $de_title,
+    $en_title,
+    ...$legacy_titles,
+  ])));
+  if (!$node instanceof NodeInterface) {
+    $node = $entity_type_manager->getStorage('node')->create([
+      'type' => 'boilerplate',
+      'langcode' => _beantragt_content_source_langcode(),
+      'status' => 1,
+    ]);
+  }
+
+  _beantragt_content_set_localized_body($node, $de_title, $de_body, $en_title, $en_body);
+  if ($node->hasField('field_boilerplate_type')) {
+    $node->set('field_boilerplate_type', 'status_notes');
+  }
+  if ($node->hasField('field_jurisdiction')) {
+    $node->set('field_jurisdiction', ['target_id' => $jurisdiction->id()]);
+  }
+  if ($node->hasField('field_organisation')) {
+    $node->set('field_organisation', NULL);
+  }
+  return _beantragt_content_save_demo_node($node, 'boilerplate', $de_title);
+}
+
+/**
+ * Saves a demo node only when new or changed in any language.
+ */
+function _beantragt_content_save_demo_node(NodeInterface $node, string $kind, string $label): string {
+  $created = $node->isNew();
+  foreach ($node->getTranslationLanguages() as $langcode => $language) {
+    if ($node->getTranslation($langcode)->hasTranslationChanges()) {
+      $node->save();
+      return sprintf('%s %s "%s".', $created ? 'Created' : 'Updated', $kind, $label);
+    }
+  }
+
+  return '';
+}
+
+/**
+ * Finds one scoped node by title, including legacy seed titles.
+ */
+function _beantragt_content_find_node_by_titles(
+  EntityTypeManagerInterface $entity_type_manager,
+  string $bundle,
+  GroupInterface $jurisdiction,
+  array $titles,
+): ?NodeInterface {
+  $titles = array_values(array_filter($titles, static fn(string $title): bool => $title !== ''));
+  if ($titles === []) {
+    return NULL;
+  }
+
+  $query = $entity_type_manager->getStorage('node')->getQuery()
+    ->accessCheck(FALSE)
+    ->condition('type', $bundle)
+    ->condition('field_jurisdiction.target_id', (int) $jurisdiction->id())
+    ->range(0, 1);
+
+  if (count($titles) === 1) {
+    $query->condition('title', $titles[0]);
+  }
+  else {
+    $query->condition('title', $titles, 'IN');
+  }
+
+  $ids = $query->execute();
+  if (!$ids) {
+    return NULL;
+  }
+
+  $node = $entity_type_manager->getStorage('node')->load((string) reset($ids));
+
+  return $node instanceof NodeInterface ? $node : NULL;
+}
+
+/**
+ * Finds one scoped node.
+ */
+function _beantragt_content_find_node(
+  EntityTypeManagerInterface $entity_type_manager,
+  string $bundle,
+  GroupInterface $jurisdiction,
+  string $key_field,
+  string $key_value,
+  bool $jurisdiction_default_only = FALSE,
+): ?NodeInterface {
+  $query = $entity_type_manager->getStorage('node')->getQuery()
+    ->accessCheck(FALSE)
+    ->condition('type', $bundle)
+    ->condition('field_jurisdiction.target_id', (int) $jurisdiction->id())
+    ->range(0, 1);
+
+  if ($key_field === 'title') {
+    $query->condition('title', $key_value);
+  }
+  else {
+    $query->condition($key_field, $key_value);
+  }
+
+  if ($jurisdiction_default_only) {
+    $query->notExists('field_organisation');
+  }
+
+  $ids = $query->execute();
+  if (!$ids) {
+    return NULL;
+  }
+
+  $node = $entity_type_manager->getStorage('node')->load((string) reset($ids));
+
+  return $node instanceof NodeInterface ? $node : NULL;
+}
+
+/**
+ * Sets source and English translation content on a node.
+ */
+function _beantragt_content_set_localized_body(
+  NodeInterface $node,
+  string $de_title,
+  string $de_body,
+  string $en_title,
+  string $en_body,
+): void {
+  $source_langcode = $node->language()->getId();
+  $source_title = $source_langcode === 'de' ? $de_title : $en_title;
+  $source_body = $source_langcode === 'de' ? $de_body : $en_body;
+
+  $node->set('title', $source_title);
+  if ($node->hasField('body')) {
+    $node->set('body', [
+      'value' => $source_body,
+      'format' => 'basic_html',
+    ]);
+  }
+
+  foreach (['de' => [$de_title, $de_body], 'en' => [$en_title, $en_body]] as $langcode => [$title, $body]) {
+    if ($langcode === $source_langcode || !_beantragt_content_language_exists($langcode)) {
+      continue;
+    }
+    $translation = $node->hasTranslation($langcode)
+      ? $node->getTranslation($langcode)
+      : $node->addTranslation($langcode);
+    $translation->set('title', $title);
+    if ($translation->hasField('body')) {
+      $translation->set('body', [
+        'value' => $body,
+        'format' => 'basic_html',
+      ]);
+    }
+  }
+}
+
+/**
+ * Sets source and translated public slugs on a page node.
+ */
+function _beantragt_content_set_localized_public_slug(
+  NodeInterface $node,
+  string $de_slug,
+  string $en_slug,
+): void {
+  if (!$node->hasField('field_public_slug')) {
+    return;
+  }
+
+  $source_langcode = $node->language()->getId();
+  $source_slug = $source_langcode === 'de' ? $de_slug : $en_slug;
+  $node->set('field_public_slug', _beantragt_content_normalize_public_slug($source_slug));
+
+  foreach (['de' => $de_slug, 'en' => $en_slug] as $langcode => $slug) {
+    if ($langcode === $source_langcode || !_beantragt_content_language_exists($langcode)) {
+      continue;
+    }
+
+    $translation = $node->hasTranslation($langcode)
+      ? $node->getTranslation($langcode)
+      : $node->addTranslation($langcode);
+    if ($translation->hasField('field_public_slug')) {
+      $translation->set('field_public_slug', _beantragt_content_normalize_public_slug($slug));
+    }
+  }
+}
+
+/**
+ * Normalizes seed route slugs.
+ */
+function _beantragt_content_normalize_public_slug(string $slug): string {
+  return strtolower(trim($slug));
+}
+
+/**
+ * Returns the preferred source langcode for seeded content.
+ */
+function _beantragt_content_source_langcode(): string {
+  return _beantragt_content_language_exists('de')
+    ? 'de'
+    : \Drupal::languageManager()->getDefaultLanguage()->getId();
+}
+
+/**
+ * Checks whether a configurable language exists.
+ */
+function _beantragt_content_language_exists(string $langcode): bool {
+  return isset(\Drupal::languageManager()->getLanguages()[$langcode]);
+}

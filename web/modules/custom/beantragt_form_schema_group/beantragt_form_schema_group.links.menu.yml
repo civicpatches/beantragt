@@ -1,0 +1,5 @@
+entity.form_schema_group.collection:
+  title: 'Form Schema Groups'
+  route_name: entity.form_schema_group.collection
+  parent: system.admin_content
+  weight: 11

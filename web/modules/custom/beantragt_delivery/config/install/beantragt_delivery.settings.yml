@@ -1,0 +1,39 @@
+enabled: false
+auto_enqueue: false
+default_adapter: mock
+max_attempts: 3
+mock:
+  target: local-mock
+webhook:
+  target_url: ''
+  secret_env: BEANTRAGT_WEBHOOK_SECRET
+  allowed_hosts: []
+  timeout_seconds: 5
+fit_connect:
+  environment: TEST
+  client_id: ''
+  client_secret_env: FIT_CONNECT_CLIENT_SECRET
+  token_url: 'https://auth-testing.fit-connect.fitko.dev/token'
+  submission_api_base: 'https://test.fit-connect.fitko.dev/submission-api'
+  destination_api_base: 'https://test.fit-connect.fitko.dev/destination-api'
+  routing_api_base: 'https://routing-api-testing.fit-connect.fitko.dev'
+  destination_id: ''
+  service_urn: ''
+  ars: ''
+  schema_uri: ''
+  schema_mime_type: 'application/json'
+  metadata_schema_version: '2.1.0'
+  use_routing_api: false
+  reply_enabled: false
+  reply_process_standard: 'urn:beantragt:process:decision:1'
+  trust_external_release: false
+credential_profiles:
+  default:
+    label: 'Default FIT-Connect TEST'
+    allowed_scopes: []
+    all_scopes: false
+    client_id: ''
+    client_secret_env: FIT_CONNECT_CLIENT_SECRET
+    token_url: 'https://auth-testing.fit-connect.fitko.dev/token'
+    submission_api_base: 'https://test.fit-connect.fitko.dev/submission-api'
+    metadata_schema_version: '2.1.0'

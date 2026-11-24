@@ -1,0 +1,134 @@
+<?php
+
+/**
+ * @file
+ * Hooks of beantragt_docgen.
+ *
+ * Deletion with the application, file access and the computed delivery offer
+ * of forms.
+ */
+
+declare(strict_types=1);
+
+use Drupal\beantragt_application\Entity\ApplicationInterface;
+use Drupal\beantragt_docgen\Plugin\Field\FormSchemaDeliveryOfferItemList;
+use Drupal\beantragt_docgen\Service\DocgenSettingsRepository;
+use Drupal\Core\Access\AccessResult;
+use Drupal\Core\Access\AccessResultInterface;
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Entity\EntityTypeInterface;
+use Drupal\Core\Field\BaseFieldDefinition;
+use Drupal\Core\Field\FieldDefinitionInterface;
+use Drupal\Core\Field\FieldItemListInterface;
+use Drupal\Core\Session\AccountInterface;
+
+/**
+ * Implements hook_ENTITY_TYPE_predelete() for application.
+ *
+ * Decision documents, their files and history go with the application.
+ */
+function beantragt_docgen_application_predelete(EntityInterface $entity): void {
+  if ($entity instanceof ApplicationInterface) {
+    \Drupal::service('beantragt_docgen.document_service')->cleanupForApplication((int) $entity->id(), (string) $entity->uuid());
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_update() for application.
+ *
+ * Anonymization by the retention run removes the documents as well, like
+ * beantragt_delivery does with external responses.
+ */
+function beantragt_docgen_application_update(EntityInterface $entity): void {
+  if (!$entity instanceof ApplicationInterface
+    || (json_decode($entity->getData() ?? '', TRUE)['_anonymized'] ?? NULL) !== TRUE) {
+    return;
+  }
+  // Only on the change to anonymized, or while documents are left from a
+  // failed earlier run; later saves of an anonymized application skip it.
+  $original = $entity->getOriginal();
+  $was_anonymized = $original instanceof ApplicationInterface
+    && (json_decode($original->getData() ?? '', TRUE)['_anonymized'] ?? NULL) === TRUE;
+  if ($was_anonymized && \Drupal::service('beantragt_docgen.document_repository')->list((int) $entity->id()) === []) {
+    return;
+  }
+  \Drupal::service('beantragt_docgen.document_service')->cleanupForApplication((int) $entity->id(), (string) $entity->uuid());
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_delete() for form_schema.
+ */
+function beantragt_docgen_form_schema_delete(EntityInterface $entity): void {
+  \Drupal::service('beantragt_docgen.settings')->deleteForm((string) $entity->uuid());
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_delete() for group.
+ *
+ * Sender address and the templates of the scope go with the group; versions
+ * that decision documents still reference stay and are logged.
+ */
+function beantragt_docgen_group_delete(EntityInterface $entity): void {
+  \Drupal::service('beantragt_docgen.settings')->deleteScope((int) $entity->id());
+  $kept = \Drupal::service('beantragt_docgen.template_catalog')->purgeScope((int) $entity->id(), (string) $entity->bundle());
+  if ($kept !== []) {
+    \Drupal::logger('beantragt_docgen')->warning('Group @id deleted: @count decision template version(s) kept because documents reference them (IDs @ids).', [
+      '@id' => (string) $entity->id(),
+      '@count' => (string) count($kept),
+      '@ids' => implode(', ', $kept),
+    ]);
+  }
+}
+
+/**
+ * Implements hook_file_download().
+ *
+ * Templates and decision documents are served only by the scoped docgen
+ * staff API and, after release, by the external response API. The generic
+ * private file route never serves them.
+ */
+function beantragt_docgen_file_download(string $uri): ?int {
+  return str_starts_with($uri, 'private://docgen/') ? -1 : NULL;
+}
+
+/**
+ * Implements hook_entity_base_field_info().
+ *
+ * Adds the computed public delivery offer to form schemas. Defined here
+ * because the offer lives in the docgen form settings; beantragt_schema
+ * reads it only through hasField().
+ */
+function beantragt_docgen_entity_base_field_info(EntityTypeInterface $entity_type): array {
+  if ($entity_type->id() !== 'form_schema') {
+    return [];
+  }
+  return [
+    'field_delivery_offer' => BaseFieldDefinition::create('string')
+      ->setLabel(t('Delivery offer'))
+      ->setDescription(t('JSON: the delivery routes citizens may choose on this form and the preselected one.'))
+      ->setSetting('max_length', 255)
+      ->setComputed(TRUE)
+      ->setReadOnly(TRUE)
+      ->setClass(FormSchemaDeliveryOfferItemList::class),
+  ];
+}
+
+/**
+ * Implements hook_entity_field_access().
+ *
+ * The computed delivery offer follows the form's docgen settings. Field
+ * access cacheability is merged into the JSON:API field normalization, so
+ * cached schema projections expire with every settings save.
+ */
+function beantragt_docgen_entity_field_access(string $operation, FieldDefinitionInterface $field_definition, AccountInterface $account, ?FieldItemListInterface $items = NULL): AccessResultInterface {
+  if ($operation !== 'view' || $field_definition->getTargetEntityTypeId() !== 'form_schema'
+    || $field_definition->getName() !== 'field_delivery_offer') {
+    return AccessResult::neutral();
+  }
+  $result = AccessResult::neutral();
+  $uuid = $items?->getEntity()->uuid();
+  if (is_string($uuid) && $uuid !== '') {
+    $result->addCacheTags([DocgenSettingsRepository::cacheTag($uuid)]);
+  }
+  return $result;
+}

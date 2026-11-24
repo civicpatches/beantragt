@@ -1,0 +1,73 @@
+# Drupal
+/web/core
+/web/modules/contrib
+/web/themes/contrib
+/web/profiles/contrib
+/web/libraries
+/web/sites/default/files
+/web/sites/default/settings.ddev.php
+/web/sites/default/settings.local.php
+/web/sites/simpletest
+/private/
+/vendor
+
+# Frontend
+/frontend/node_modules
+/frontend/.pnpm-store
+/frontend/.nuxt
+/frontend/.output
+/frontend/dist
+
+# Python
+__pycache__/
+*.pyc
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local smoke/research artifacts
+.ted-query.json
+.smoke-shots/*.png
+.smoke-shots/*.network-response
+.smoke-shots/release/
+.smoke-shots/product-smoke/
+.smoke-shots/showcase/
+
+# Environment
+.env
+.env.local
+/deploy/*.env
+/deploy/rag-secrets/
+/deploy/rag-secrets-*/
+/deploy/docgen-secrets/
+!/deploy/rag-secrets-*.example/
+!/deploy/rag-secrets-*.example/**
+
+# DDEV generated (may contain secrets)
+.ddev/.ddev-docker-compose-*.yaml
+.ddev/*.local.env
+.ddev/rag-secrets/
+.ddev/docgen-secrets/
+/.scratch/
+.ddev/db_snapshots
+.ddev/.webimageBuild
+/.editorconfig
+/.gitattributes
+/frontend/
+
+
+
+.claude/
+.vercel
+
+# Agent instructions stay local, never versioned (Holger policy 2026-07-12)
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md

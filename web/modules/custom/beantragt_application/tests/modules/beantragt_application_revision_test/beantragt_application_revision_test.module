@@ -1,0 +1,18 @@
+<?php
+
+/**
+ * @file
+ * Test field for observing the real application save lifecycle.
+ */
+
+use Drupal\Core\Entity\EntityTypeInterface;
+use Drupal\Core\Field\BaseFieldDefinition;
+
+/**
+ * Implements hook_entity_base_field_info().
+ */
+function beantragt_application_revision_test_entity_base_field_info(EntityTypeInterface $entity_type): array {
+  return $entity_type->id() === 'application' ? [
+    'revision_probe' => BaseFieldDefinition::create('application_revision_probe')->setRevisionable(TRUE),
+  ] : [];
+}

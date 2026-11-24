@@ -1,0 +1,280 @@
+name: beantragt-selfhost
+
+services:
+  init-secrets:
+    image: alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f
+    entrypoint: [/bin/sh, /opt/init-secrets.sh]
+    volumes:
+      - type: bind
+        source: ./init-secrets.sh
+        target: /opt/init-secrets.sh
+        read_only: true
+        bind:
+          create_host_path: false
+      - db-root:/generated/db-root
+      - db-client:/generated/db-client
+      - drupal-secrets:/generated/drupal
+      - nuxt-secrets:/generated/nuxt
+      - docgen-client:/generated/docgen-client
+      - docgen-server:/generated/docgen-server
+      - gotenberg-secrets:/generated/gotenberg
+    network_mode: none
+
+  db:
+    image: mariadb:11.4.13@sha256:5e73baf8179b29f115101bb102763a47a017361f3e9792daccba6646c3ab1532
+    depends_on:
+      init-secrets:
+        condition: service_completed_successfully
+    environment:
+      MARIADB_DATABASE: drupal
+      MARIADB_USER: drupal
+      MARIADB_PASSWORD_FILE: /run/db-client/DB_PASSWORD
+      MARIADB_ROOT_PASSWORD_FILE: /run/db-root/password
+    volumes:
+      - database:/var/lib/mysql
+      - db-client:/run/db-client:ro
+      - db-root:/run/db-root:ro
+    healthcheck:
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  clamav:
+    image: clamav/clamav-debian:1.5.4@sha256:c21aa18cc0a358678255a3dfb343a4555b58f71b97d7b869df8fdf7ea0a5b4b1
+    volumes:
+      - clamav-signatures:/var/lib/clamav
+
+  mailpit:
+    profiles: [mailpit]
+    image: axllent/mailpit:v1.28@sha256:c6cf0b06eb516a0b80a8a5251f945c131e6beb8396112964404f62856487f5bd
+    ports:
+      - "127.0.0.1:${MAIL_PORT:-18025}:8025"
+
+  drupal:
+    image: "ghcr.io/civicpatches/beantragt-drupal:${BEANTRAGT_VERSION:?set BEANTRAGT_VERSION in .env}"
+    extends:
+      file: compose.mail.yaml
+      service: "drupal-${BEANTRAGT_MAIL_MODE:-mailpit}"
+    entrypoint: [/bin/sh, /opt/selfhost/start-drupal.sh]
+    command: [php-fpm]
+    depends_on:
+      db:
+        condition: service_healthy
+      clamav:
+        condition: service_started
+      docgen:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_NAME: drupal
+      DB_USER: drupal
+      CONFIG_SYNC_DIR: /app/data/config/sync
+      NUXT_DRUPAL_SERVICE_USER: nuxt_service
+      DRUPAL_TRUSTED_HOST: "${DRUPAL_TRUSTED_HOST:-localhost}"
+      DRUPAL_REVERSE_PROXY_ADDRESSES: "${DRUPAL_REVERSE_PROXY_ADDRESSES:-}"
+      BEANTRAGT_SELFHOST_DRUPAL_URL: "${DRUPAL_PUBLIC_URL:-http://localhost:${DRUPAL_PORT:-18080}}"
+      BEANTRAGT_EXAMPLE_DATA: "${BEANTRAGT_EXAMPLE_DATA:-0}"
+      BEANTRAGT_MAIL_MODE: "${BEANTRAGT_MAIL_MODE:-mailpit}"
+      BEANTRAGT_MAIL_REDIRECT_RECIPIENT: "${BEANTRAGT_MAIL_REDIRECT_RECIPIENT:-}"
+      SMTP_HOST: "${SMTP_HOST:-}"
+      SMTP_USER: "${SMTP_USER:-}"
+      SMTP_EHLO_HOST: "${SMTP_EHLO_HOST:-}"
+      BEANTRAGT_ATTACHMENT_SCANNER: clamav
+      BEANTRAGT_CLAMAV_HOST: clamav
+      BEANTRAGT_DOCGEN_BASE_URL: http://docgen:3000
+      BEANTRAGT_SELFHOST_UI_URL: "${UI_PUBLIC_URL:-http://localhost:${UI_PORT:-13000}}"
+    volumes:
+      - type: bind
+        source: ./start-drupal.sh
+        target: /opt/selfhost/start-drupal.sh
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./install.sh
+        target: /app/data/deploy/selfhost/install.sh
+        read_only: true
+        bind:
+          create_host_path: false
+      - public-files:/app/data/web/sites/default/files
+      - private-files:/app/data/private
+      - db-client:/run/beantragt/db-client:ro
+      - drupal-secrets:/run/beantragt/drupal:ro
+      - nuxt-secrets:/run/beantragt/nuxt:ro
+      - docgen-client:/run/beantragt/docgen-client:ro
+    networks: [default, docgen-api]
+    healthcheck:
+      test: [CMD, php, -r, 'exit(@fsockopen("127.0.0.1", 9000) === false ? 1 : 0);']
+      interval: 5s
+      timeout: 3s
+      start_period: 2m
+      retries: 24
+
+  nginx:
+    image: "ghcr.io/civicpatches/beantragt-nginx:${BEANTRAGT_VERSION:?set BEANTRAGT_VERSION in .env}"
+    depends_on:
+      drupal:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${DRUPAL_PORT:-18080}:8080"
+    volumes:
+      - public-files:/app/data/web/sites/default/files:ro
+
+  ui:
+    image: "ghcr.io/civicpatches/beantragt-ui:${BEANTRAGT_VERSION:?set BEANTRAGT_VERSION in .env}"
+    entrypoint: [/bin/sh, -ec]
+    command:
+      - |
+        export NUXT_DRUPAL_SERVICE_PASSWORD="$$(cat /run/nuxt/NUXT_DRUPAL_SERVICE_PASSWORD)"
+        test -n "$$NUXT_DRUPAL_SERVICE_PASSWORD"
+        exec node scripts/ui-mode/start.mjs
+    depends_on:
+      nginx:
+        condition: service_healthy
+    environment:
+      BEANTRAGT_UI_MODE: all
+      NUXT_API_BASE: http://nginx:8080
+      NUXT_PUBLIC_API_BASE: "${DRUPAL_PUBLIC_URL:-http://localhost:${DRUPAL_PORT:-18080}}"
+      NUXT_PUBLIC_APP_VERSION: "${BEANTRAGT_VERSION}"
+      NUXT_PUBLIC_SOURCE_URL: "${NUXT_PUBLIC_SOURCE_URL:-}"
+      NUXT_DRUPAL_SERVICE_USER: nuxt_service
+    ports:
+      - "127.0.0.1:${UI_PORT:-13000}:3000"
+    volumes:
+      - nuxt-secrets:/run/nuxt:ro
+
+  docgen:
+    image: "ghcr.io/civicpatches/beantragt-docgen:${BEANTRAGT_VERSION:?set BEANTRAGT_VERSION in .env}"
+    depends_on:
+      init-secrets:
+        condition: service_completed_successfully
+      docgen-gotenberg:
+        condition: service_healthy
+      docgen-verapdf:
+        condition: service_healthy
+    environment:
+      DOCGEN_TOKENS_FILE: /run/docgen/tokens
+      GOTENBERG_URL: http://docgen-gotenberg:3000
+      GOTENBERG_USERNAME: docgen
+      GOTENBERG_PASSWORD_FILE: /run/gotenberg/password
+      GOTENBERG_TIMEOUT_MS: "70000"
+      VERAPDF_URL: http://docgen-verapdf:8080
+      VERAPDF_TIMEOUT_MS: "120000"
+      DOCGEN_MAX_CONCURRENT_JOBS: "1"
+    volumes:
+      - docgen-server:/run/docgen:ro
+      - gotenberg-secrets:/run/gotenberg:ro
+    read_only: true
+    tmpfs: [/tmp:size=16m]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [docgen-api, docgen-engine]
+
+  docgen-gotenberg:
+    image: gotenberg/gotenberg:8.39.0-libreoffice@sha256:4c0eb92ef22e5d5fb0a49eac924b63d85d0b0334ea3365a1f5ca428f367b3054
+    user: "1001:1001"
+    entrypoint: [/bin/sh, /opt/docgen-runtime/gotenberg-launch.sh]
+    command:
+      - /usr/bin/tini
+      - --
+      - gotenberg
+      - --gotenberg-hide-banner
+      - --api-enable-basic-auth
+      - --api-body-limit=8MB
+      - --api-timeout=60s
+      - --api-disable-download-from
+      - --webhook-disable
+      - --pdfengines-disable-routes
+      - --prometheus-disable-collect
+      - --libreoffice-deny-private-ips
+      - --libreoffice-deny-public-ips
+      - --libreoffice-restart-after=1
+      - --libreoffice-start-timeout=30s
+      - --libreoffice-max-queue-size=4
+      - --libreoffice-auto-start
+    depends_on:
+      init-secrets:
+        condition: service_completed_successfully
+    environment:
+      GOTENBERG_USERNAME: docgen
+      GOTENBERG_PASSWORD_FILE: /run/gotenberg/password
+    volumes:
+      - type: bind
+        source: ../../services/docgen/runtime/gotenberg-launch.sh
+        target: /opt/docgen-runtime/gotenberg-launch.sh
+        read_only: true
+        bind:
+          create_host_path: false
+      - gotenberg-secrets:/run/gotenberg:ro
+    read_only: true
+    tmpfs: [/tmp:size=256m]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, curl, --fail, --silent, --output, /dev/null, "http://127.0.0.1:3000/health"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 18
+    networks: [docgen-engine]
+
+  docgen-verapdf:
+    image: verapdf/rest:v1.30.3@sha256:b0e4ce6032521f87999e92562dc226a62da1fd30f2325998d1d2f2ed6eeb5d50
+    platform: linux/amd64
+    user: "100:101"
+    entrypoint: [/bin/sh, /opt/docgen-runtime/verapdf-launch.sh]
+    command: [dumb-init, --, java, -Djava.awt.headless=true, -XX:MaxRAMPercentage=70, -jar, /opt/verapdf-rest/verapdf-rest.jar, server, /opt/docgen-runtime/server.yml]
+    environment:
+      VERAPDF_MAX_FILE_SIZE: "25"
+    volumes:
+      - type: bind
+        source: ../../services/docgen/runtime/verapdf-launch.sh
+        target: /opt/docgen-runtime/verapdf-launch.sh
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ../../services/docgen/runtime/verapdf-server.yml
+        target: /opt/docgen-runtime/server.yml
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
+      - /var/opt/verapdf-rest:size=8m,mode=0755
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1g
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, "http://127.0.0.1:8080/api/info"]
+      interval: 10s
+      timeout: 10s
+      start_period: 90s
+      retries: 12
+    networks: [docgen-engine]
+
+networks:
+  docgen-api:
+    internal: true
+  docgen-engine:
+    internal: true
+
+secrets:
+  smtp-password:
+    # Only the SMTP service variant mounts this. An unset path supplies no password.
+    file: "${SMTP_PASSWORD_FILE:-/dev/null}"
+
+volumes:
+  database:
+  public-files:
+  private-files:
+  clamav-signatures:
+  db-root:
+  db-client:
+  drupal-secrets:
+  nuxt-secrets:
+  docgen-client:
+  docgen-server:
+  gotenberg-secrets:

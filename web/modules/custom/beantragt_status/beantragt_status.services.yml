@@ -1,0 +1,34 @@
+services:
+  logger.channel.beantragt_status:
+    parent: logger.channel_base
+    arguments: ['beantragt_status']
+
+  beantragt_status.status_builder:
+    class: Drupal\beantragt_status\Service\StatusBuilder
+    arguments:
+      - '@entity_type.manager'
+      - '@logger.factory'
+      - '@config.factory'
+      - '@datetime.time'
+      - '@beantragt_application.data_protection'
+      - '@module_handler'
+      - '@beantragt_application.citizen_status_projection'
+      - '@language_manager'
+  beantragt_status.status_otp:
+    class: Drupal\beantragt_status\Service\StatusOtpService
+    arguments:
+      - '@database'
+      - '@plugin.manager.mail'
+      - '@config.factory'
+      - '@language_manager'
+      - '@private_key'
+      - '@logger.channel.beantragt_status'
+
+  beantragt_status.status_code_requests:
+    class: Drupal\beantragt_status\EventSubscriber\StatusCodeSubscriber
+    arguments:
+      - '@beantragt_status.status_builder'
+      - '@beantragt_status.status_otp'
+      - '@logger.channel.beantragt_status'
+    tags:
+      - { name: event_subscriber }
