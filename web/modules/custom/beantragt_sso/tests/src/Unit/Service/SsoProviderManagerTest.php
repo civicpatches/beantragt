@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Drupal\Tests\beantragt_sso\Unit\Service;
 
+use Drupal\beantragt_sso\Exception\SsoAuthenticationException;
 use Drupal\beantragt_sso\Service\SsoProviderManager;
 use Drupal\Core\Config\Config;
 use Drupal\Core\Config\ConfigFactoryInterface;
@@ -94,7 +95,7 @@ final class SsoProviderManagerTest extends UnitTestCase {
   }
 
   /**
-   * Production disables mock login without explicit public demo mode.
+   * Production disables mock login even with the development opt-in.
    */
   public function testMockLoginDeniedInProduction(): void {
     putenv('BEANTRAGT_SSO_MOCK=true');
@@ -112,7 +113,7 @@ final class SsoProviderManagerTest extends UnitTestCase {
     putenv('BEANTRAGT_SSO_MOCK=true');
     $manager = $this->manager([]);
     self::assertFalse($manager->isDevContext());
-    $this->expectException(AccessDeniedHttpException::class);
+    $this->expectException(SsoAuthenticationException::class);
     $manager->assertMockAllowed(['profile' => 'bundid_mock']);
   }
 
@@ -153,7 +154,7 @@ final class SsoProviderManagerTest extends UnitTestCase {
   public function testAssertMockAllowedDeniesClosedGate(): void {
     $manager = $this->manager([]);
 
-    $this->expectException(AccessDeniedHttpException::class);
+    $this->expectException(SsoAuthenticationException::class);
     $manager->assertMockAllowed([
       'profile' => 'bundid_mock',
       'mock' => TRUE,

@@ -15,6 +15,7 @@ use Drupal\Core\Entity\EntityStorageInterface;
 use Drupal\Core\Site\Settings;
 use Drupal\Tests\UnitTestCase;
 use Drupal\user\UserInterface;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -47,23 +48,31 @@ final class SsoIdentityLinkerTest extends UnitTestCase {
   }
 
   /**
-   * Lower assurance levels are rejected before session finalization.
+   * Assurance failures report the reason for the refusal.
    */
-  public function testRejectsTooLowAssuranceLevel(): void {
-    $this->expectException(\RuntimeException::class);
-    $this->invokeAssuranceGuard([
-      'minimum_assurance_level' => 'high',
-    ], 'low');
+  #[DataProvider('insufficientAssuranceLevels')]
+  public function testRejectsInsufficientAssuranceLevel(string $minimum, ?string $actual, string $code): void {
+    try {
+      $this->invokeAssuranceGuard(['minimum_assurance_level' => $minimum], $actual);
+      $this->fail('Insufficient assurance level was accepted.');
+    }
+    catch (SsoAuthenticationException $exception) {
+      $this->assertSame($code, $exception->failureCode);
+    }
   }
 
   /**
-   * Missing assurance level is rejected when a minimum is configured.
+   * Provides missing and non-qualifying assurance claims.
    */
-  public function testRejectsMissingAssuranceLevel(): void {
-    $this->expectException(\RuntimeException::class);
-    $this->invokeAssuranceGuard([
-      'minimum_assurance_level' => 'substantial',
-    ], NULL);
+  public static function insufficientAssuranceLevels(): array {
+    return [
+      'missing' => ['substantial', NULL, 'assurance_missing'],
+      'below minimum' => ['high', 'substantial', 'assurance_too_low'],
+      'BundID normal' => ['high', 'normal', 'assurance_too_low'],
+      'unknown claim' => ['high', 'unknown', 'assurance_unrecognized'],
+      'custom minimum mismatch' => ['custom', 'high', 'assurance_unrecognized'],
+      'different custom levels' => ['custom', 'other', 'assurance_unrecognized'],
+    ];
   }
 
   /**
@@ -89,13 +98,12 @@ final class SsoIdentityLinkerTest extends UnitTestCase {
   }
 
   /**
-   * A "normal" BundID assurance level cannot satisfy a "high" minimum.
+   * An exact match satisfies a custom minimum.
    */
-  public function testRejectsBundidNormalForHighMinimum(): void {
-    $this->expectException(\RuntimeException::class);
-    $this->invokeAssuranceGuard([
-      'minimum_assurance_level' => 'high',
-    ], 'normal');
+  public function testAcceptsMatchingCustomAssuranceLevel(): void {
+    $this->invokeAssuranceGuard(['minimum_assurance_level' => 'custom'], 'custom');
+
+    $this->addToAssertionCount(1);
   }
 
   /**

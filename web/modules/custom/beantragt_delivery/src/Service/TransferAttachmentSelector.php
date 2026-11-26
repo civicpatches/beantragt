@@ -34,6 +34,41 @@ final class TransferAttachmentSelector {
   ) {}
 
   /**
+   * Projects original claims for legacy delivery without reading file bytes.
+   */
+  public function legacyManifest(ApplicationInterface $application): array {
+    if (!$application->hasField('field_schema_revision_id') || !$this->entities->hasDefinition('application_attachment')) {
+      return [];
+    }
+    $revision = (int) $application->get('field_schema_revision_id')->value;
+    $forms = $this->entities->getStorage('form_schema');
+    $form = $revision > 0 && $forms instanceof RevisionableStorageInterface ? $forms->loadRevision($revision) : NULL;
+    if (!$form instanceof FormSchemaInterface) {
+      return [];
+    }
+
+    $storage = $this->entities->getStorage('application_attachment');
+    $ids = $storage->getQuery()->accessCheck(FALSE)
+      ->condition('field_application', (int) $application->id())
+      ->condition('field_submission_revision_id', 0, '>')
+      ->sort('created', 'ASC')
+      ->execute();
+    $assignments = ApplicationProofAssignments::read($application);
+    $manifest = [];
+    foreach ($storage->loadMultiple($ids) as $attachment) {
+      if (!$attachment instanceof ApplicationAttachmentInterface) {
+        continue;
+      }
+      $field_id = $assignments[$attachment->uuid()]['fieldId'] ?? $attachment->getFieldId();
+      if ($this->original($attachment, $application, $form, $field_id)) {
+        $size = (int) $attachment->get('field_size')->value;
+        $manifest[] = ['id' => $attachment->uuid()] + ($size > 0 ? ['size' => $size] : []);
+      }
+    }
+    return $manifest;
+  }
+
+  /**
    * Freezes clean claimed uploads with a submitted or confirmed assignment.
    */
   public function select(ApplicationInterface $application, int $revision, bool $send): array {

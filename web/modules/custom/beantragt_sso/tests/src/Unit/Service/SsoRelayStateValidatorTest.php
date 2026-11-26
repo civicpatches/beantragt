@@ -76,7 +76,7 @@ final class SsoRelayStateValidatorTest extends UnitTestCase {
     }
     foreach ([1, 65535] as $port) {
       $target = "https://ui.example.test:$port";
-      $this->assertSame($target, $validator->sanitize('bundid', $target));
+      $this->assertSame('/fallback', $validator->sanitize('bundid', $target));
     }
   }
 
@@ -135,6 +135,31 @@ final class SsoRelayStateValidatorTest extends UnitTestCase {
       'https://beantragt.ddev.site/meine-antraege',
       $validator->sanitize('bundid', 'https://beantragt.ddev.site/meine-antraege')
     );
+    $this->assertSame('/fallback', $validator->sanitize('bundid', 'https://beantragt.ddev.site:8443/return'));
+
+    $requestStack->push(Request::create('https://beantragt.ddev.site:8443/current'));
+    $target = 'https://beantragt.ddev.site:8443/return';
+    $this->assertSame($target, $validator->sanitize('bundid', $target));
+    $this->assertSame('/fallback', $validator->sanitize('bundid', 'https://beantragt.ddev.site/return'));
+  }
+
+  /**
+   * Host-only entries permit only the scheme's default port.
+   */
+  public function testAllowlistUsesEffectivePort(): void {
+    $validator = $this->validator([
+      'allowed_relay_hosts' => ['ui.example.test', 'localhost', 'second.example.test:443'],
+    ]);
+    foreach (['https://ui.example.test', 'https://ui.example.test:443', 'http://localhost',
+      'http://localhost:80', 'https://second.example.test', 'https://second.example.test:443',
+    ] as $target) {
+      $this->assertTrue($validator->isAllowedRelayHost('bundid', $target), $target);
+    }
+    foreach (['https://ui.example.test:80', 'https://ui.example.test:8443', 'http://localhost:3001',
+      'https://localhost:80', 'https://second.example.test:8443',
+    ] as $target) {
+      $this->assertFalse($validator->isAllowedRelayHost('bundid', $target), $target);
+    }
   }
 
   /**

@@ -27,6 +27,13 @@ services:
       - '@database'
       - '@datetime.time'
 
+  beantragt_sso.request_correlation:
+    class: Drupal\beantragt_sso\Service\SsoRequestCorrelation
+    arguments:
+      - '@keyvalue.expirable'
+      - '@lock'
+      - '@datetime.time'
+
   beantragt_sso.identity_linker:
     class: Drupal\beantragt_sso\Service\SsoIdentityLinker
     arguments:
@@ -46,6 +53,7 @@ services:
       - '@beantragt_sso.replay_cache'
       - '@beantragt_sso.identity_linker'
       - '@logger.channel.beantragt_sso'
+      - '@beantragt_sso.request_correlation'
 
   beantragt_sso.failure_log:
     class: Drupal\beantragt_sso\Service\SsoFailureLog

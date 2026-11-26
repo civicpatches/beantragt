@@ -310,20 +310,20 @@ final class SsoIdentityLinker {
 
     $actual = $assurance_level !== NULL ? strtolower(trim($assurance_level)) : '';
     if ($actual === '') {
-      throw new \RuntimeException('SSO assertion does not include the required assurance level.');
+      throw new SsoAuthenticationException('assurance_missing', 'SSO assertion does not include the required assurance level.');
     }
 
     $minimum_rank = self::ASSURANCE_RANKS[$minimum] ?? NULL;
     $actual_rank = self::ASSURANCE_RANKS[$actual] ?? NULL;
     if ($minimum_rank !== NULL && $actual_rank !== NULL) {
       if ($actual_rank < $minimum_rank) {
-        throw new \RuntimeException('SSO assurance level is too low.');
+        throw new SsoAuthenticationException('assurance_too_low', 'SSO assurance level is too low.');
       }
       return;
     }
 
     if ($actual !== $minimum) {
-      throw new \RuntimeException('SSO assurance level does not match the configured minimum.');
+      throw new SsoAuthenticationException('assurance_unrecognized', 'SSO assurance level does not match the configured minimum.');
     }
   }
 

@@ -8,6 +8,20 @@ beantragt_sso.settings:
     default_provider:
       type: string
       label: 'Default provider'
+    login_flood_limit:
+      type: integer
+      label: 'Maximum SSO login starts per IP'
+      requiredKey: false
+      constraints:
+        Range:
+          min: 1
+    login_flood_window:
+      type: integer
+      label: 'SSO login start flood window in seconds'
+      requiredKey: false
+      constraints:
+        Range:
+          min: 1
     providers:
       type: sequence
       label: 'Providers'

@@ -29,6 +29,7 @@ use Drupal\beantragt_delivery\Service\FitConnectSubmissionApiClient;
 use Drupal\beantragt_delivery\Service\FitConnectSubmissionMetadataBuilder;
 use Drupal\beantragt_delivery\Service\MappedPayloadBuilder;
 use Drupal\beantragt_delivery\Service\ScopeAccess;
+use Drupal\beantragt_delivery\Service\TransferAttachmentSelector;
 use Drupal\beantragt_delivery\Service\TransferPayloadRepository;
 use Drupal\beantragt_delivery\Service\TransferPlanner;
 use Drupal\beantragt_delivery\Service\ApplicationDeliveryPurger;
@@ -101,6 +102,11 @@ final class TransferPlannerTest extends KernelTestBase {
    * Planner and real SQL repositories under test.
    */
   private TransferPlanner $planner;
+
+  /**
+   * Envelope builder sharing the planner's synthetic entity manager.
+   */
+  private DeliveryEnvelopeBuilder $envelopeBuilder;
 
   /**
    * Empty by default, with explicit policy doubles in extension tests.
@@ -360,6 +366,7 @@ final class TransferPlannerTest extends KernelTestBase {
     $scope_access = new ScopeAccess($manager);
     $this->integrations = new IntegrationRepository($database, new Php(), $time, $manager, $scope_access, $profiles, $registry, $rules);
     $protection = new ApplicationDataProtectionService($manager, new NullLogger());
+    $this->envelopeBuilder = new DeliveryEnvelopeBuilder(new TransferAttachmentSelector($manager, $protection));
     $this->logs = new DeliveryLogRepository($database, new Php(), $time, new NullLogger());
     $purger = new ApplicationDeliveryPurger($database, $manager,
       (new \ReflectionClass(ExternalResponseService::class))->newInstanceWithoutConstructor(),
@@ -377,7 +384,7 @@ final class TransferPlannerTest extends KernelTestBase {
     $this->plannerArguments = [
       $database, $manager, $scope_access, $this->integrations, $profiles, $registry,
       new MappedPayloadBuilder($registry, $rules, new DataContractValidator($registry)),
-      $protection, $this->payloads, $this->logs, new DeliveryEnvelopeBuilder($manager),
+      $protection, $this->payloads, $this->logs, $this->envelopeBuilder,
       $queue_factory, $lock, $time, $this->container->get('config.factory'), NULL, $this->gates, $this->plannerLogger,
     ];
     $this->planner = new TransferPlanner(...$this->plannerArguments);
@@ -898,7 +905,7 @@ final class TransferPlannerTest extends KernelTestBase {
     $this->planner->approve($application, $row['uuid'], 7);
     $this->logs->claimFitConnectProcessing($row['id'], 1);
     $this->approverAllowed = FALSE;
-    $result = $this->gateway([])->deliver((new DeliveryEnvelopeBuilder($this->manager))->build($application), $row['id']);
+    $result = $this->gateway([])->deliver($this->envelopeBuilder->build($application), $row['id']);
     self::assertSame('integration.dispatch_approver_unauthorized', $result->errorCode);
     self::assertSame([], $this->requests);
   }
@@ -924,7 +931,7 @@ final class TransferPlannerTest extends KernelTestBase {
       $this->jsonResponse([]),
       $this->jsonResponse(['events' => []]),
     ]);
-    $envelope = (new DeliveryEnvelopeBuilder($this->manager))->build($application);
+    $envelope = $this->envelopeBuilder->build($application);
     $result = $gateway->deliver($envelope, $row['id']);
     self::assertSame('', $result->errorCode);
     self::assertTrue($result->isAccepted());
@@ -970,7 +977,7 @@ final class TransferPlannerTest extends KernelTestBase {
       $result = $this->gateway([
         $this->jsonResponse(['access_token' => 'synthetic-token', 'expires_in' => 1800, 'token_type' => 'Bearer']),
         $this->jsonResponse($destination),
-      ])->deliver((new DeliveryEnvelopeBuilder($this->manager))->build($application), $row['id']);
+      ])->deliver($this->envelopeBuilder->build($application), $row['id']);
       self::assertSame($code, $result->errorCode);
       self::assertCount(2, $this->requests);
       self::assertArrayNotHasKey('fitConnect', $this->logs->load($row['id'])['metadata']);
@@ -997,7 +1004,7 @@ final class TransferPlannerTest extends KernelTestBase {
       };
       $this->requests = [];
       $gateway = $this->gateway(array_slice($responses, 0, $stop_after));
-      $result = $gateway->deliver((new DeliveryEnvelopeBuilder($this->manager))->build($application), $row['id']);
+      $result = $gateway->deliver($this->envelopeBuilder->build($application), $row['id']);
       self::assertSame('integration.connection_disabled', $result->errorCode);
       self::assertSame('failed', $result->status);
       self::assertCount($stop_after, $this->requests);
@@ -1366,7 +1373,7 @@ final class TransferPlannerTest extends KernelTestBase {
   public function testInactiveAssignmentSuppressesEveryFallbackTrigger(): void {
     $definition = $this->assignment(1, 'automatic');
     $application = $this->application(1, 1);
-    $old_mock = $this->logs->createQueued($application, (new DeliveryEnvelopeBuilder($this->manager))->build($application), 'mock', 'synthetic');
+    $old_mock = $this->logs->createQueued($application, $this->envelopeBuilder->build($application), 'mock', 'synthetic');
     $this->integrations->transition('assignment', $definition['assignment']['uuid'], 'inactive');
     $storage = $this->container->get('config.storage');
     $settings = $storage->read('beantragt_delivery.settings');
@@ -1404,7 +1411,7 @@ final class TransferPlannerTest extends KernelTestBase {
    */
   public function testLegacyRowRunsThroughDispatcherWithoutNewBinding(): void {
     $application = $this->application(1, 1);
-    $id = $this->logs->createQueued($application, (new DeliveryEnvelopeBuilder($this->manager))->build($application), 'mock', 'synthetic');
+    $id = $this->logs->createQueued($application, $this->envelopeBuilder->build($application), 'mock', 'synthetic');
     $this->container->get('database')->update('beantragt_delivery_log')->fields([
       'adapter' => 'fit_connect',
       'legacy_eligible' => 1,
@@ -1455,7 +1462,7 @@ final class TransferPlannerTest extends KernelTestBase {
     $time->method('getCurrentTime')->willReturn(1000);
     $time->method('getRequestTime')->willReturn(1000);
     return new DeliveryDispatcher($this->manager, $this->container->get('queue'),
-      $this->container->get('config.factory'), $this->logs, new DeliveryEnvelopeBuilder($this->manager),
+      $this->container->get('config.factory'), $this->logs, $this->envelopeBuilder,
       new DeliveryPolicyResolver(), new MockDeliveryGateway(NULL, TRUE),
       new WebhookDeliveryGateway($this->container->get('config.factory'), new Client(['handler' => new MockHandler([])]), $time),
       $gateway, new NullLogger(), $lock, $this->planner, $changer, $this->integrations);
@@ -1467,7 +1474,7 @@ final class TransferPlannerTest extends KernelTestBase {
   private function assertGatewayBlocked(array $row, ApplicationInterface $application, string $code): void {
     $this->logs->markProcessing($row['id'], 1);
     $this->requests = [];
-    $result = $this->gateway([])->deliver((new DeliveryEnvelopeBuilder($this->manager))->build($application), $row['id']);
+    $result = $this->gateway([])->deliver($this->envelopeBuilder->build($application), $row['id']);
     self::assertSame($code, $result->errorCode);
     self::assertSame([], $this->requests);
   }
@@ -1540,7 +1547,7 @@ final class TransferPlannerTest extends KernelTestBase {
       $application = $this->application($index + 1, 1);
       // Historical FIT rows predate bindings; the repository refuses to create
       // new unbound rows, so write one the way older releases left them.
-      $id = $this->logs->createQueued($application, (new DeliveryEnvelopeBuilder($this->manager))->build($application), 'mock', $this->destination(1));
+      $id = $this->logs->createQueued($application, $this->envelopeBuilder->build($application), 'mock', $this->destination(1));
       $this->container->get('database')->update('beantragt_delivery_log')->fields(['adapter' => 'fit_connect'])->condition('id', $id)->execute();
       if ($state === 'accepted') {
         $this->container->get('database')->update('beantragt_delivery_log')->fields(['status' => 'accepted'])->condition('id', $id)->execute();

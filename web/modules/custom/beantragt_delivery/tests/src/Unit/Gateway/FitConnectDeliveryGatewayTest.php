@@ -19,6 +19,7 @@ use Drupal\beantragt_delivery\Service\FitConnectMetadataDocumentBuilder;
 use Drupal\beantragt_delivery\Service\FitConnectSubmissionApiClient;
 use Drupal\beantragt_delivery\Service\FitConnectSubmissionMetadataBuilder;
 use Drupal\beantragt_delivery\Value\DeliveryEnvelope;
+use Drupal\beantragt_schema\Entity\FormSchemaInterface;
 use Drupal\Component\Datetime\TimeInterface;
 use Drupal\Component\Uuid\UuidInterface;
 use Drupal\Core\Config\ConfigFactoryInterface;
@@ -29,6 +30,8 @@ use Drupal\Core\Database\Query\Update;
 use Drupal\Core\Database\StatementInterface;
 use Drupal\Core\Entity\EntityStorageInterface;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\Core\Entity\Query\QueryInterface;
+use Drupal\Core\Entity\RevisionableStorageInterface;
 use Drupal\Tests\UnitTestCase;
 use GuzzleHttp\Client;
 use GuzzleHttp\Handler\MockHandler;
@@ -414,45 +417,85 @@ final class FitConnectDeliveryGatewayTest extends UnitTestCase {
     };
     $http = new Client(['handler' => HandlerStack::create($handler)]);
     $application = $this->createMock(ApplicationInterface::class);
+    $application->method('id')->willReturn(10);
     $application->method('uuid')->willReturn(self::APPLICATION_UUID);
     $application->method('isEmailConfirmed')->willReturn(TRUE);
     $application->method('getData')->willReturn($this->storedData);
     $application->method('getCreatedTime')->willReturn(1789689600);
-    $storage = $this->createMock(EntityStorageInterface::class);
+    $storage = $this->createMock(RevisionableStorageInterface::class);
     $storage->method('load')->with(10)->willReturn($application);
     $manager = $this->createMock(EntityTypeManagerInterface::class);
     if ($attachment === NULL) {
       $manager->method('getStorage')->with('application')->willReturn($storage);
     }
     else {
+      $application_fields = [
+        'field_schema_revision_id' => ['value' => 7],
+        'field_schema' => ['target_id' => 21],
+      ];
+      $application->method('hasField')->willReturnCallback(static fn(string $name): bool => $name === 'field_schema_revision_id');
+      $application->method('get')->willReturnCallback(fn(string $name) => $this->field($application_fields[$name] ?? []));
+      $submitted = $this->createMock(ApplicationInterface::class);
+      $submitted->method('uuid')->willReturn(self::APPLICATION_UUID);
+      $submitted->method('get')->willReturnCallback(fn(string $name) => $this->field($application_fields[$name] ?? []));
+      $submitted->method('getData')->willReturn(json_encode(['proof' => [['attachmentId' => self::ATTACHMENT_ID]]], JSON_THROW_ON_ERROR));
+      $storage->method('loadRevision')->with(12)->willReturn($submitted);
+      $form = $this->createMock(FormSchemaInterface::class);
+      $form->method('id')->willReturn(21);
+      $form->method('getRevisionId')->willReturn(7);
+      $form_storage = $this->createMock(RevisionableStorageInterface::class);
+      $form_storage->method('loadRevision')->with(7)->willReturn($form);
+
       $attachment_entity = $this->createMock(ApplicationAttachmentInterface::class);
+      $attachment_entity->method('uuid')->willReturn(self::ATTACHMENT_ID);
+      $attachment_entity->method('getFieldId')->willReturn('proof');
       $values = [
         'field_application' => ['target_id' => $attachment['applicationId'] ?? 10],
+        'field_schema' => ['target_id' => 21],
+        'field_submission_revision_id' => ['value' => 12],
+        'field_upload_status' => ['value' => 'claimed'],
         'field_scan_status' => ['value' => $attachment['scanStatus'] ?? 'clean'],
         'field_file' => ['target_id' => 23],
         'field_original_filename' => ['value' => 'proof.pdf'],
         'field_mime_type' => ['value' => 'application/pdf'],
       ];
-      $attachment_entity->method('get')->willReturnCallback(function (string $name) use ($values) {
-        $field = $this->createMock(FieldItemListInterface::class);
-        $field->method('__get')->willReturnCallback(static fn(string $key) => $values[$name][$key] ?? NULL);
-        return $field;
-      });
+      $attachment_entity->method('get')->willReturnCallback(fn(string $name) => $this->field($values[$name] ?? []));
+      $query = $this->createMock(QueryInterface::class);
+      $query->method('accessCheck')->willReturnSelf();
+      $query->method('condition')->willReturnSelf();
+      $query->method('sort')->willReturnSelf();
+      $query->method('execute')->willReturn([36]);
       $attachment_storage = $this->createMock(EntityStorageInterface::class);
-      $attachment_storage->expects($this->once())->method('loadByProperties')->with([
+      $attachment_storage->method('getQuery')->willReturn($query);
+      $attachment_storage->method('loadMultiple')->with([36])->willReturn([$attachment_entity]);
+      $same_application = ($attachment['applicationId'] ?? 10) === 10;
+      $attachment_storage->expects($same_application ? $this->once() : $this->never())->method('loadByProperties')->with([
         'uuid' => self::ATTACHMENT_ID,
         'field_application' => 10,
       ])->willReturn([$attachment_entity]);
       $file = $this->createMock(FileInterface::class);
       $file->method('getFileUri')->willReturn('private://delivery/proof.pdf');
       $file_storage = $this->createMock(EntityStorageInterface::class);
-      $valid = ($attachment['applicationId'] ?? 10) === 10 && ($attachment['scanStatus'] ?? 'clean') === 'clean';
+      $valid = $same_application && ($attachment['scanStatus'] ?? 'clean') === 'clean';
       $file_storage->expects($valid ? $this->once() : $this->never())->method('load')->with(23)->willReturn($file);
       $manager->method('getStorage')->willReturnMap([
-        ['application', $storage], ['application_attachment', $attachment_storage], ['file', $file_storage],
+        ['application', $storage], ['form_schema', $form_storage],
+        ['application_attachment', $attachment_storage], ['file', $file_storage],
       ]);
+      $manager->method('hasDefinition')->with('application_attachment')->willReturn(TRUE);
     }
     return new FitConnectDeliveryGateway($factory, new FitConnectAccessTokenClient($http), new FitConnectSubmissionMetadataBuilder(), new FitConnectSubmissionApiClient($http), new FitConnectMetadataDocumentBuilder(), new FitConnectJweEncrypter(), $manager, $this->repository(), new ApplicationDataProtectionService($manager, $this->createMock(LoggerInterface::class)));
+  }
+
+  /**
+   * Mocks the scalar and target values used by attachment provenance.
+   */
+  private function field(array $values): FieldItemListInterface {
+    $field = $this->createMock(FieldItemListInterface::class);
+    $field->method('isEmpty')->willReturn($values === []);
+    $field->method('__isset')->willReturnCallback(static fn(string $key): bool => isset($values[$key]));
+    $field->method('__get')->willReturnCallback(static fn(string $key) => $values[$key] ?? NULL);
+    return $field;
   }
 
   /**

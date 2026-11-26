@@ -8,6 +8,7 @@ use Drupal\beantragt_application\Entity\ApplicationAttachmentInterface;
 use Drupal\beantragt_application\Entity\ApplicationInterface;
 use Drupal\beantragt_application\RevisionLog;
 use Drupal\beantragt_delivery\Exception\IntegrationException;
+use Drupal\beantragt_delivery\Exception\FitConnectTransportException;
 use Drupal\beantragt_delivery\Service\TransferAttachmentSelector;
 use Drupal\beantragt_delivery\Value\DeliveryEnvelope;
 use Drupal\beantragt_delivery\Value\FitConnectSettings;
@@ -97,6 +98,59 @@ final class TransferAttachmentSelectorTest extends GroupKernelTestBase {
   protected function tearDown(): void {
     putenv($this->originalKey === FALSE ? 'BEANTRAGT_APPLICATION_DATA_ENCRYPTION_KEY' : 'BEANTRAGT_APPLICATION_DATA_ENCRYPTION_KEY=' . $this->originalKey);
     parent::tearDown();
+  }
+
+  /**
+   * Legacy delivery loads only the original submission file.
+   */
+  public function testLegacyDeliveryLoadsOnlyOriginalSubmission(): void {
+    [$form, $application, $original] = $this->submission();
+    $comment = $this->attachment($form, 'comment_attachment', 'application_comments');
+    $internal = $this->attachment($form, '@unassigned');
+    foreach ([$comment, $internal] as $attachment) {
+      $attachment->set('field_application', $application->id())
+        ->set('field_upload_status', 'claimed')
+        ->set('created', $application->getCreatedTime())->save();
+    }
+    $this->entityTypeManager()->getStorage('application_comment')->create([
+      'field_application' => $application->id(),
+      'field_body' => 'Synthetic staff note',
+      'field_author_role' => 'staff',
+      'field_visibility' => 'internal',
+      'field_attachments' => [$comment->get('field_file')->target_id],
+      'uid' => $this->container->get('current_user')->id(),
+    ])->save();
+
+    $envelope = $this->container->get('beantragt_delivery.envelope_builder')->build($application);
+    $this->assertSame(1, $envelope->attachmentCount);
+    $this->assertSame([['id' => $original->uuid(), 'size' => strlen($this->pdf())]], $envelope->attachmentManifest);
+
+    $gateway = $this->container->get('beantragt_delivery.fit_connect_gateway');
+    $load = new \ReflectionMethod($gateway, 'loadAttachments');
+    $loaded = $load->invoke($gateway, $envelope, $application);
+    $this->assertCount(1, $loaded);
+    $this->assertSame([
+      'attachmentId' => $original->uuid(),
+      'bytes' => $this->pdf(),
+      'filename' => 'synthetic.pdf',
+      'mimeType' => 'application/pdf',
+    ], $loaded[0]);
+
+    $old_manifest = $envelope->toLogMetadata();
+    foreach ([$comment, $internal] as $attachment) {
+      $old_manifest['attachmentManifest'][] = ['id' => $attachment->uuid(), 'size' => strlen($this->pdf())];
+    }
+    $old_manifest['attachmentCount'] = 3;
+    $old_envelope = DeliveryEnvelope::fromLogRow([
+      'applicationId' => $envelope->applicationId,
+      'applicationUuid' => $envelope->applicationUuid,
+      'dataHash' => $envelope->dataHash,
+      'metadata' => $old_manifest,
+    ]);
+    $this->assertInstanceOf(DeliveryEnvelope::class, $old_envelope);
+    $this->expectException(FitConnectTransportException::class);
+    $this->expectExceptionMessage('Attachment does not belong to the original submission.');
+    $load->invoke($gateway, $old_envelope, $application);
   }
 
   /**

@@ -13,6 +13,7 @@ use Drupal\beantragt_applicant\Service\ApplicantManager;
 use Drupal\beantragt_passwordless\Service\VerifiedAccountMail;
 use Drupal\beantragt_sso\Service\SsoClientFactory;
 use Drupal\beantragt_sso\Service\SsoIdentityLinker;
+use Drupal\beantragt_sso\Service\SsoRequestCorrelation;
 use Drupal\beantragt_sso\Exception\SsoAuthenticationException;
 use Drupal\beantragt_sso\Service\SsoAccountPolicy;
 use Drupal\Core\Cache\CacheableResponseInterface;
@@ -30,8 +31,13 @@ use Drupal\user\Entity\Role;
 use Drupal\user\Entity\User;
 use Drupal\user\UserInterface;
 use OneLogin\Saml2\Auth;
+use OneLogin\Saml2\Constants;
+use OneLogin\Saml2\Utils;
 use PHPUnit\Framework\Attributes\Group;
 use Psr\Log\NullLogger;
+use RobRichards\XMLSecLibs\XMLSecurityDSig;
+use RobRichards\XMLSecLibs\XMLSecurityKey;
+use Symfony\Component\HttpFoundation\Cookie;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\Session\Session;
@@ -125,9 +131,270 @@ final class SsoSecurityKernelTest extends KernelTestBase {
       parse_str((string) parse_url($location, PHP_URL_QUERY), $query);
       $this->assertNotEmpty($query['SAMLRequest']);
       $this->assertSame($local_return, $query['RelayState'], $parameter);
-      $this->assertSame($local_return, $this->container->get('beantragt_sso.login_service')
-        ->consumeRelayState('external_idp', $this->session));
+      $cookie = $this->correlationCookie($response, 'external_idp');
+      $this->assertMatchesRegularExpression('/^[a-f0-9]{64}$/', $cookie->getValue());
+      $this->assertGreaterThanOrEqual(599, $cookie->getMaxAge());
+      $this->assertLessThanOrEqual(600, $cookie->getMaxAge());
+      $this->assertFalse($this->session->has('beantragt_sso.external_idp.request_id'));
+      $record = $this->container->get('beantragt_sso.request_correlation')->consume('external_idp', $cookie->getValue());
+      $this->assertSame($local_return, $record['relay_state']);
+      $authn = simplexml_load_string(gzinflate(base64_decode($query['SAMLRequest'])));
+      $this->assertSame((string) $authn['ID'], $record['request_id']);
     }
+  }
+
+  /**
+   * Login starts share a configurable budget across providers for one IP.
+   */
+  public function testLoginStartFloodLimit(): void {
+    $this->container->set('beantragt_applicant.manager', $this->createMock(ApplicantManager::class));
+    $config = $this->config('beantragt_sso.settings');
+    $this->assertSame(30, $config->get('login_flood_limit'));
+    $this->assertSame(600, $config->get('login_flood_window'));
+    $config->set('login_flood_limit', 2)->set('login_flood_window', 90)
+      ->set('providers.bundid.enabled', TRUE)
+      ->set('providers.other_idp', $config->get('providers.bundid'))
+      ->save();
+    $auth = $this->createMock(Auth::class);
+    $auth->method('login')->willReturn('https://idp.example.test/saml/sso');
+    $auth->method('getLastRequestID')->willReturn('request-id');
+    $factory = $this->createMock(SsoClientFactory::class);
+    $factory->expects($this->exactly(3))->method('auth')->willReturn($auth);
+    $this->container->set('beantragt_sso.client_factory', $factory);
+
+    $store = $this->container->get('keyvalue.expirable')->get('beantragt_sso.request_correlation');
+    foreach (['bundid', 'other_idp'] as $provider) {
+      $start = $this->ssoRequest("$provider/login", 'GET', [], [], '192.0.2.10');
+      $this->assertSame(302, $start->getStatusCode());
+      $this->correlationCookie($start, $provider);
+    }
+    $this->assertCount(2, $store->getAll());
+    $limited = $this->ssoRequest('bundid/login', 'GET', [
+      'returnTo' => '/form?step=2#identity',
+      'destination' => '//other.example.test',
+    ], [], '192.0.2.10');
+    $this->assertFailureRelayRedirect($limited, '/form?step=2&%s#identity', 'rate_limited');
+    $this->assertSame([], $limited->headers->getCookies());
+    $this->assertCount(2, $store->getAll());
+
+    $other_ip = $this->ssoRequest('bundid/login', 'GET', [], [], '192.0.2.11');
+    $this->assertSame(302, $other_ip->getStatusCode());
+    $this->assertCount(3, $store->getAll());
+  }
+
+  /**
+   * The status report and login route reject wrong ACS paths or hosts.
+   */
+  public function testExplicitAcsUrlMustMatchLoginRoute(): void {
+    $this->container->set('beantragt_applicant.manager', $this->createMock(ApplicantManager::class));
+    $logger = $this->createMock(LoggerInterface::class);
+    $logger->expects($this->exactly(2))->method('log')->with(
+      'error',
+      'SSO failure @code (correlation @correlation).',
+      $this->callback(static fn (array $context): bool => array_keys($context) === ['@code', '@correlation']
+        && $context['@code'] === 'acs_url_misconfigured'),
+    );
+    $this->container->set('logger.channel.beantragt_sso', $logger);
+    $factory = $this->createMock(SsoClientFactory::class);
+    $factory->expects($this->never())->method('auth');
+    $this->container->set('beantragt_sso.client_factory', $factory);
+    $config = $this->config('beantragt_sso.settings')->set('providers.bundid.enabled', TRUE);
+    require_once DRUPAL_ROOT . '/core/includes/install.inc';
+    $this->container->get('module_handler')->loadInclude('beantragt_sso', 'install');
+
+    $stack = $this->container->get('request_stack');
+    foreach ([
+      'https://beantragt.example.test/auth/sso/other_idp/acs' => FALSE,
+      'https://other.example.test/auth/sso/bundid/acs' => FALSE,
+      'https://BEANTRAGT.example.test/auth/sso/bundid/acs' => TRUE,
+      '' => TRUE,
+    ] as $url => $matches) {
+      $config->set('providers.bundid.sp_acs_url', $url)->save();
+      $stack->push(Request::create('https://beantragt.example.test/admin/reports/status'));
+      try {
+        $requirements = beantragt_sso_requirements('runtime');
+      }
+      finally {
+        $stack->pop();
+      }
+      if ($matches) {
+        $this->assertSame([], $requirements);
+        continue;
+      }
+      $this->assertSame(REQUIREMENT_ERROR, $requirements['beantragt_sso_acs_url']['severity']);
+      $arg = $requirements['beantragt_sso_acs_url']['description']->getArguments();
+      $this->assertSame(['@providers' => 'bundid'], $arg);
+      $start = $this->ssoRequest('bundid/login', 'GET', []);
+      $this->assertFailureRelayRedirect($start, '/auth/login?%s', 'unavailable');
+      $this->assertSame([], $start->headers->getCookies());
+    }
+    $this->assertSame([], $this->container->get('keyvalue.expirable')->get('beantragt_sso.request_correlation')->getAll());
+  }
+
+  /**
+   * Real php-saml validates signed responses through the ACS route.
+   */
+  public function testSignedSamlAcs(): void {
+    $this->installSchema('beantragt_sso', ['beantragt_sso_replay']);
+    $this->container->set('beantragt_applicant.manager', $this->createMock(ApplicantManager::class));
+    $acs = 'https://beantragt.example.test/auth/sso/bundid/acs';
+    $issuer = 'https://idp.example.test/metadata';
+    $audience = 'https://beantragt.example.test/auth/sso/bundid/metadata';
+    $key = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_RSA, 'private_key_bits' => 2048]);
+    $this->assertNotFalse($key);
+    $csr = openssl_csr_new(['commonName' => 'idp.example.test'], $key);
+    $this->assertNotFalse($csr);
+    $certificate = openssl_csr_sign($csr, NULL, $key, 1);
+    $this->assertNotFalse($certificate);
+    $this->assertTrue(openssl_x509_export($certificate, $pem));
+    $this->assertTrue(openssl_pkey_export($key, $private_key));
+    $signing_key = new XMLSecurityKey(XMLSecurityKey::RSA_SHA256, ['type' => 'private']);
+    $signing_key->loadKey($private_key);
+
+    $this->config('beantragt_sso.settings')
+      ->set('providers.bundid.enabled', TRUE)
+      ->set('providers.bundid.profile', 'generic')
+      ->set('providers.bundid.sp_acs_url', $acs)
+      ->set('providers.bundid.sp_entity_id', $audience)
+      ->set('providers.bundid.idp_entity_id', $issuer)
+      ->set('providers.bundid.idp_sso_url', 'https://idp.example.test/sso')
+      ->set('providers.bundid.idp_x509_cert', $pem)
+      ->set('providers.bundid.minimum_assurance_level', 'high')
+      ->set('providers.bundid.security.authn_requests_signed', FALSE)
+      ->set('providers.bundid.security.want_messages_signed', TRUE)
+      ->set('providers.bundid.security.want_assertions_signed', TRUE)
+      ->save();
+
+    $fixture = file_get_contents(dirname(__DIR__, 2) . '/fixtures/saml-response.xml');
+    $this->assertNotFalse($fixture);
+    $target = '/meine-antraege';
+    $users = $this->container->get('entity_type.manager')->getStorage('user');
+    foreach ([
+      'wrong response ID' => ['acs_rejected', 'high', ['@RESPONSE_TO@' => '_unrelated-request']],
+      'wrong destination' => [
+        'acs_rejected', 'high', ['@DESTINATION@' => 'https://other.example.test/auth/sso/bundid/acs'],
+      ],
+      'wrong audience' => ['acs_rejected', 'high', ['@AUDIENCE@' => 'https://other.example.test/metadata']],
+      'broken signature' => ['acs_rejected', 'high', []],
+      'missing assurance' => ['acs_rejected', NULL, []],
+      'insufficient assurance' => ['assurance_insufficient', 'substantial', []],
+      'unrecognized assurance' => ['acs_rejected', 'custom', []],
+      'valid response' => [NULL, 'high', []],
+    ] as $case => [$error_code, $assurance, $overrides]) {
+      $start = $this->ssoRequest('bundid/login', 'GET', ['returnTo' => $target]);
+      $this->assertSame(302, $start->getStatusCode(), $case);
+      $cookie = $this->correlationCookie($start);
+      parse_str((string) parse_url($start->headers->get('Location'), PHP_URL_QUERY), $query);
+      $authn_request = simplexml_load_string(gzinflate(base64_decode($query['SAMLRequest'])));
+      $this->assertNotFalse($authn_request);
+      $request_id = (string) $authn_request['ID'];
+      $this->assertNotSame('', $request_id);
+      $now = time();
+      $xml = strtr($fixture, $overrides + [
+        '@MESSAGE_ID@' => '_response-' . bin2hex(random_bytes(8)),
+        '@ASSERTION_ID@' => '_assertion-' . bin2hex(random_bytes(8)),
+        '@NOW@' => gmdate('Y-m-d\\TH:i:s\\Z', $now),
+        '@EXPIRES@' => gmdate('Y-m-d\\TH:i:s\\Z', $now + 300),
+        '@DESTINATION@' => $acs,
+        '@RESPONSE_TO@' => $request_id,
+        '@ACS@' => $acs,
+        '@ISSUER@' => $issuer,
+        '@AUDIENCE@' => $audience,
+      ]);
+      $document = new \DOMDocument();
+      $this->assertTrue($document->loadXML($xml));
+      $assertion = $document->getElementsByTagNameNS(Constants::NS_SAML, 'Assertion')->item(0);
+      if ($assurance !== NULL) {
+        $statement = $assertion->appendChild($document->createElementNS(Constants::NS_SAML, 'saml:AttributeStatement'));
+        $attribute = $statement->appendChild($document->createElementNS(Constants::NS_SAML, 'saml:Attribute'));
+        $attribute->setAttribute('Name', 'assuranceLevel');
+        $attribute->appendChild($document->createElementNS(Constants::NS_SAML, 'saml:AttributeValue', $assurance));
+      }
+      $this->signSamlElement($assertion, $signing_key, $pem);
+      $this->signSamlElement($document->documentElement, $signing_key, $pem);
+      if ($case === 'broken signature') {
+        $signature = $document->getElementsByTagNameNS(XMLSecurityDSig::XMLDSIGNS, 'SignatureValue')->item(0);
+        $signature->textContent = str_repeat('A', strlen($signature->textContent));
+      }
+      $payload = base64_encode($document->saveXML());
+
+      $this->session = new Session(new MockArraySessionStorage());
+      $this->container->set('session', $this->session);
+      // Drupal's redirect subscriber reads the session on every redirect.
+      $this->session->start();
+      $session_id = $this->session->getId();
+      $session_values = $this->session->all();
+      $user_count = $users->getQuery()->accessCheck(FALSE)->count()->execute();
+      $identity_count = $this->identityCount();
+      $response = $this->postSignedSamlResponse($payload, $cookie);
+      $this->assertTrue($this->correlationCookie($response)->isCleared());
+      if ($error_code !== NULL) {
+        $this->assertFailureRelayRedirect($response, $target . '?%s', $error_code);
+        $this->assertSame($user_count, $users->getQuery()->accessCheck(FALSE)->count()->execute(), $case);
+        $this->assertSame($identity_count, $this->identityCount(), $case);
+        $this->assertSame($session_values, $this->session->all(), $case);
+        $this->assertSame($session_id, $this->session->getId(), $case);
+        $this->assertCount(1, $response->headers->getCookies(), $case);
+        $this->assertTrue($this->container->get('current_user')->isAnonymous(), $case);
+        continue;
+      }
+
+      $this->assertRelayRedirect($response, $target . '?check_logged_in=1');
+      $this->assertNotSame($session_id, $this->session->getId());
+      $this->assertSame('bundid', $this->session->get('beantragt_sso.last_login')['provider']);
+      $this->assertTrue($this->container->get('current_user')->isAuthenticated());
+
+      $this->session->remove('beantragt_sso.last_login');
+      $this->container->get('current_user')->setAccount(new AnonymousUserSession());
+      $replay = $this->postSignedSamlResponse($payload, $cookie);
+      $this->assertFailureRelayRedirect($replay, '/auth/login?%s', 'acs_rejected');
+      // Give the identical message a fresh matching correlation so it reaches
+      // the replay cache even though the original browser key was consumed.
+      $fresh_cookie = $this->container->get('beantragt_sso.request_correlation')
+        ->create('bundid', $request_id, $target);
+      $replay = $this->postSignedSamlResponse($payload, $fresh_cookie);
+      $this->assertFailureRelayRedirect($replay, $target . '?%s', 'acs_rejected');
+      $this->assertFalse($this->session->has('beantragt_sso.last_login'));
+      $this->assertTrue($this->container->get('current_user')->isAnonymous());
+    }
+  }
+
+  /**
+   * Signs an assertion or response in SAML schema order, after its issuer.
+   */
+  private function signSamlElement(\DOMElement $element, XMLSecurityKey $key, string $certificate): void {
+    $signer = new XMLSecurityDSig();
+    $signer->setCanonicalMethod(XMLSecurityDSig::EXC_C14N);
+    $signer->addReference($element, XMLSecurityDSig::SHA256, [
+      'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
+      XMLSecurityDSig::EXC_C14N,
+    ], ['id_name' => 'ID', 'overwrite' => FALSE]);
+    $signer->sign($key);
+    $signer->add509Cert($certificate);
+    $issuer = $element->getElementsByTagNameNS(Constants::NS_SAML, 'Issuer')->item(0);
+    $signer->insertSignature($element, $issuer->nextSibling);
+  }
+
+  /**
+   * Mirrors the routed URI php-saml reads from the web server environment.
+   */
+  private function postSignedSamlResponse(string $payload, Cookie $cookie): Response {
+    // phpcs:disable DrupalPractice.Variables.GetRequestData.SuperglobalAccessed
+    $previous_uri = $_SERVER['REQUEST_URI'] ?? NULL;
+    $_SERVER['REQUEST_URI'] = '/auth/sso/bundid/acs';
+    try {
+      return $this->ssoRequest('bundid/acs', 'POST', ['SAMLResponse' => $payload], [$cookie->getName() => $cookie->getValue()]);
+    }
+    finally {
+      if ($previous_uri === NULL) {
+        unset($_SERVER['REQUEST_URI']);
+      }
+      else {
+        $_SERVER['REQUEST_URI'] = $previous_uri;
+      }
+      Utils::setBaseURL(NULL);
+    }
+    // phpcs:enable DrupalPractice.Variables.GetRequestData.SuperglobalAccessed
   }
 
   /**
@@ -148,6 +415,7 @@ final class SsoSecurityKernelTest extends KernelTestBase {
     $auth = $this->createMock(Auth::class);
     $auth->method('login')->willReturn('https://idp.example.test/saml/sso');
     $auth->method('getLastRequestID')->willReturn('request-id');
+    $auth->expects($this->exactly(count($this->relayTargets())))->method('processResponse')->with('request-id');
     $auth->method('getErrors')->willReturn([]);
     $auth->method('isAuthenticated')->willReturn(TRUE);
     $auth->method('getNameId')->willReturn('redirect-test-subject');
@@ -160,14 +428,22 @@ final class SsoSecurityKernelTest extends KernelTestBase {
     $this->container->set('beantragt_sso.client_factory', $factory);
 
     foreach ($this->relayTargets() as $target => $expected) {
-      $this->assertSame(302, $this->ssoRequest('bundid/login', 'GET', ['returnTo' => $target])->getStatusCode());
-      $this->session->remove('beantragt_sso.last_login');
-      $response = $this->ssoRequest('bundid/acs', 'POST', [
+      $start = $this->ssoRequest('bundid/login', 'GET', ['returnTo' => $target]);
+      $this->assertSame(302, $start->getStatusCode());
+      $key = $this->correlationCookie($start)->getValue();
+      $this->session = new Session(new MockArraySessionStorage());
+      $this->container->set('session', $this->session);
+      $this->session->start();
+      $session_id = $this->session->getId();
+      $response = $this->ssoRequest('bundid/acs?destination=https%3A%2F%2Fbeantragt.example.test%3A8443%2Fignored', 'POST', [
         'SAMLResponse' => 'verified-by-toolkit-stub',
         'RelayState' => 'https://ui.example.test:8443/ignored-post-value',
-      ]);
+      ], [SsoRequestCorrelation::cookieName('bundid') => $key]);
       $this->assertSame('bundid', $this->session->get('beantragt_sso.last_login')['provider'] ?? NULL);
+      $this->assertNotSame($session_id, $this->session->getId());
+      $this->assertTrue($this->correlationCookie($response)->isCleared());
       $this->assertRelayRedirect($response, $expected);
+      $this->assertNull($this->container->get('beantragt_sso.request_correlation')->consume('bundid', $key));
     }
   }
 
@@ -224,10 +500,81 @@ final class SsoSecurityKernelTest extends KernelTestBase {
     $this->container->set('beantragt_sso.client_factory', $factory);
 
     foreach ($this->failureRelayTargets() as $target => $expected) {
-      $this->assertSame(302, $this->ssoRequest('bundid/login', 'GET', ['returnTo' => $target])->getStatusCode());
+      $start = $this->ssoRequest('bundid/login', 'GET', ['returnTo' => $target]);
+      $this->assertSame(302, $start->getStatusCode());
+      $key = $this->correlationCookie($start)->getValue();
       // The service rejects the callback because SAMLResponse is missing.
-      $response = $this->ssoRequest('bundid/acs', 'POST', []);
+      $response = $this->ssoRequest('bundid/acs', 'POST', [], [SsoRequestCorrelation::cookieName('bundid') => $key]);
       $this->assertFailureRelayRedirect($response, $expected, 'acs_rejected');
+      $this->assertTrue($this->correlationCookie($response)->isCleared());
+      $this->assertNull($this->container->get('beantragt_sso.request_correlation')->consume('bundid', $key));
+    }
+  }
+
+  /**
+   * Unusable correlation keys never reach SAML processing.
+   */
+  public function testAcsRejectsUnusableCorrelation(): void {
+    $this->container->set('beantragt_applicant.manager', $this->createMock(ApplicantManager::class));
+    $this->config('beantragt_sso.settings')->set('providers.bundid.enabled', TRUE)->save();
+    $factory = $this->createMock(SsoClientFactory::class);
+    $factory->expects($this->never())->method('auth');
+    $this->container->set('beantragt_sso.client_factory', $factory);
+    $correlation = $this->container->get('beantragt_sso.request_correlation');
+    $foreign = $correlation->create('other_idp', 'request-id', '/foreign')->getValue();
+    $consumed = $correlation->create('bundid', 'request-id', '/consumed')->getValue();
+    $expired = str_repeat('b', 64);
+    $this->assertNotNull($correlation->consume('bundid', $consumed));
+    $this->container->get('keyvalue.expirable')->get('beantragt_sso.request_correlation')
+      ->setWithExpire(hash('sha256', $expired), [
+        'provider' => 'bundid',
+        'request_id' => 'request-id',
+        'relay_state' => '/expired',
+        'expires' => time() - 1,
+      ], 600);
+
+    $this->session->set('beantragt_sso.bundid.request_id', 'legacy-session-id');
+    $valid = $correlation->create('bundid', 'request-id', '/correct-name-only')->getValue();
+    $wrong_names = ['beantragt_sso_corr' => $valid, SsoRequestCorrelation::cookieName('other_idp') => $valid];
+    foreach ([NULL, str_repeat('a', 64), $expired, $consumed, $foreign] as $key) {
+      $cookies = $key === NULL ? $wrong_names : [SsoRequestCorrelation::cookieName('bundid') => $key];
+      $response = $this->ssoRequest('bundid/acs', 'POST', ['SAMLResponse' => 'unused'], $cookies);
+      $this->assertFailureRelayRedirect($response, '/auth/login?%s', 'acs_rejected');
+      $this->assertTrue($this->correlationCookie($response)->isCleared());
+      $this->assertFalse($this->session->has('beantragt_sso.last_login'));
+    }
+    $this->assertNotNull($correlation->consume('bundid', $valid));
+    $this->assertNull($correlation->consume('other_idp', $foreign));
+  }
+
+  /**
+   * A dev HTTP login stores one correlation shared by both callback paths.
+   */
+  public function testDevHttpSessionFallbackConsumesTheSameEntry(): void {
+    $this->container->set('beantragt_applicant.manager', $this->createMock(ApplicantManager::class));
+    $this->config('beantragt_sso.settings')->set('providers.bundid.enabled', TRUE)->save();
+    $auth = $this->createMock(Auth::class);
+    $auth->method('login')->willReturn('https://idp.example.test/saml/sso');
+    $auth->method('getLastRequestID')->willReturn('request-id');
+    $factory = $this->createMock(SsoClientFactory::class);
+    $factory->method('auth')->willReturn($auth);
+    $this->container->set('beantragt_sso.client_factory', $factory);
+    $previous = getenv('BEANTRAGT_ENV');
+    putenv('BEANTRAGT_ENV=dev');
+    try {
+      $login = $this->container->get('beantragt_sso.login_service');
+      $start = Request::create('http://localhost/auth/sso/bundid/login');
+      $start->setSession($this->session);
+      $key = $login->startLogin('bundid', '/meine-antraege', $start)['cookie']->getValue();
+      $acs = Request::create('http://localhost/auth/sso/bundid/acs', 'POST');
+      $this->assertSame(['request_id' => 'request-id', 'relay_state' => '/meine-antraege'],
+        $login->consumeRequestCorrelation('bundid', $acs, $this->session));
+      $this->assertFalse($this->session->has('beantragt_sso.bundid.request_id'));
+      $acs->cookies->set(SsoRequestCorrelation::cookieName('bundid'), $key);
+      $this->assertNull($login->consumeRequestCorrelation('bundid', $acs, $this->session));
+    }
+    finally {
+      putenv('BEANTRAGT_ENV' . ($previous === FALSE ? '' : '=' . $previous));
     }
   }
 
@@ -247,13 +594,13 @@ final class SsoSecurityKernelTest extends KernelTestBase {
     putenv('BEANTRAGT_ENV=dev');
     putenv('BEANTRAGT_SSO_MOCK=true');
     try {
-      foreach ($this->failureRelayTargets() as $target => $expected) {
+      foreach ($this->failureRelayTargets('/auth/login') as $target => $expected) {
         $this->session->set('beantragt_sso.bundid_mock.mock_state', 'expected-state');
         $response = $this->ssoRequest('bundid_mock/mock-login', 'GET', [
           'RelayState' => $target,
           'mockState' => 'invalid-state',
         ]);
-        $this->assertFailureRelayRedirect($response, $expected, 'mock_login_failed');
+        $this->assertFailureRelayRedirect($response, $expected, 'login_failed');
       }
     }
     finally {
@@ -263,16 +610,20 @@ final class SsoSecurityKernelTest extends KernelTestBase {
   }
 
   /**
-   * Production mock-login guards reject anonymous requests before redirects.
+   * Production mock routes cannot establish a session, even with the opt-in.
    */
-  public function testProductionMockLoginDoesNotRedirect(): void {
+  public function testProductionMockRoutesRejectLogin(): void {
     $this->container->set('beantragt_applicant.manager', $this->createMock(ApplicantManager::class));
     $config = $this->config('beantragt_sso.settings')
       ->set('providers.bundid_mock.enabled', TRUE)
       ->set('providers.staff_mock.enabled', FALSE)
       ->set('providers.bundid.enabled', TRUE);
-    $expected_statuses = ['bundid_mock' => 403, 'staff_mock' => 403, 'bundid' => 400];
-    foreach (array_keys($expected_statuses) as $provider) {
+    $expected_codes = [
+      'bundid_mock' => 'mock_not_allowed',
+      'staff_mock' => 'unavailable',
+      'bundid' => 'mock_not_allowed',
+    ];
+    foreach (array_keys($expected_codes) as $provider) {
       $config->set("providers.$provider.allowed_relay_hosts", ['ui.example.test:8443']);
     }
     $config->save();
@@ -280,20 +631,47 @@ final class SsoSecurityKernelTest extends KernelTestBase {
     $previous_environment = getenv('BEANTRAGT_ENV');
     $previous_mock = getenv('BEANTRAGT_SSO_MOCK');
     putenv('BEANTRAGT_ENV=production');
-    putenv('BEANTRAGT_SSO_MOCK');
+    putenv('BEANTRAGT_SSO_MOCK=true');
     try {
-      $this->assertTrue($this->container->get('current_user')->isAnonymous());
-      foreach ($expected_statuses as $provider => $status) {
+      foreach ($expected_codes as $provider => $code) {
         $response = $this->ssoRequest("$provider/mock-login", 'GET', [
           'RelayState' => 'https://ui.example.test:8443/return',
         ]);
-        $this->assertSame($status, $response->getStatusCode(), $provider);
-        $this->assertFalse($response->headers->has('Location'), $provider);
+        $this->assertFailureRelayRedirect($response, 'https://ui.example.test:8443/return?%s', $code);
+        $this->assertSame([], $response->headers->getCookies());
       }
+      $start = $this->ssoRequest('bundid_mock/login', 'GET', ['returnTo' => ['/malformed']]);
+      $this->assertFailureRelayRedirect($start, '/auth/login?%s', 'mock_not_allowed');
+      $this->assertSame([], $start->headers->getCookies());
+
+      $mock_idp = $this->ssoRequest('bundid_mock/mock-idp', 'GET', []);
+      $this->assertSame(403, $mock_idp->getStatusCode());
+      $this->assertSame('{"error":{"code":"mock_not_allowed"}}', $mock_idp->getContent());
+      $this->assertTrue($mock_idp->headers->hasCacheControlDirective('no-store'));
+      $this->assertTrue($this->container->get('current_user')->isAnonymous());
+      $this->assertFalse($this->session->has('beantragt_sso.last_login'));
     }
     finally {
       putenv('BEANTRAGT_ENV' . ($previous_environment === FALSE ? '' : '=' . $previous_environment));
       putenv('BEANTRAGT_SSO_MOCK' . ($previous_mock === FALSE ? '' : '=' . $previous_mock));
+    }
+  }
+
+  /**
+   * Unavailable providers return status-specific metadata errors with no prose.
+   */
+  public function testMetadataFailureReturnsJsonCode(): void {
+    $this->container->set('beantragt_applicant.manager', $this->createMock(ApplicantManager::class));
+    $factory = $this->createMock(SsoClientFactory::class);
+    $factory->expects($this->once())->method('settings')
+      ->willThrowException(new \RuntimeException('Internal configuration details.'));
+    $this->container->set('beantragt_sso.client_factory', $factory);
+    foreach (['bundid' => 500, 'unknown' => 404] as $provider => $status) {
+      $response = $this->ssoRequest("$provider/metadata", 'GET', []);
+      $this->assertSame($status, $response->getStatusCode());
+      $this->assertSame('application/json', $response->headers->get('Content-Type'));
+      $this->assertSame('{"error":{"code":"unavailable"}}', $response->getContent());
+      $this->assertTrue($response->headers->hasCacheControlDirective('no-store'));
     }
   }
 
@@ -304,24 +682,19 @@ final class SsoSecurityKernelTest extends KernelTestBase {
    *   Submitted targets keyed to expected locations with a placeholder for the
    *   error parameters.
    */
-  private function failureRelayTargets(): array {
+  private function failureRelayTargets(string $fallback = '/fallback'): array {
     return [
       'https://ui.example.test:8443/return?step=1#done' => 'https://ui.example.test:8443/return?step=1&%s#done',
-      'https://other.example.test/return' => '/fallback?%s',
+      'https://BEANTRAGT.example.test/return' => 'https://BEANTRAGT.example.test/return?%s',
+      'https://other.example.test/return' => $fallback . '?%s',
     ];
   }
 
   /**
-   * Verifies the error marker, code, and generated correlation in the redirect.
+   * Verifies that the public code is the only added query parameter.
    */
   private function assertFailureRelayRedirect(Response $response, string $expected, string $code): void {
-    $location = $response->headers->get('Location', '');
-    parse_str((string) parse_url($location, PHP_URL_QUERY), $query);
-    $correlation = $query['sso_correlation'] ?? '';
-    $this->assertMatchesRegularExpression('/^[a-f0-9]{32}$/', $correlation, $location);
-
-    $error_query = 'sso_error=1&sso_code=' . $code . '&sso_correlation=' . $correlation;
-    $this->assertRelayRedirect($response, sprintf($expected, $error_query));
+    $this->assertRelayRedirect($response, sprintf($expected, 'sso_error=' . $code));
   }
 
   /**
@@ -343,26 +716,56 @@ final class SsoSecurityKernelTest extends KernelTestBase {
       '//ui.example.test:8443/return' => $fallback,
       '/return?step=1#done' => '/return?step=1&check_logged_in=1#done',
       'https://beantragt.example.test/return' => 'https://beantragt.example.test/return?check_logged_in=1',
+      'https://beantragt.example.test:8443/return' => $fallback,
     ];
   }
 
   /**
    * Handles an SSO request in Drupal's HTTP kernel with the test session.
+   *
+   * @param string $path
+   *   Path relative to the SSO routes.
+   * @param string $method
+   *   HTTP method.
+   * @param array<string, mixed> $parameters
+   *   Request parameters.
+   * @param array<string, string> $cookies
+   *   Request cookies.
+   * @param string $ip
+   *   Client IP address.
    */
-  private function ssoRequest(string $path, string $method, array $parameters): Response {
-    $request = Request::create('https://beantragt.example.test/auth/sso/' . $path, $method, $parameters);
+  private function ssoRequest(string $path, string $method, array $parameters, array $cookies = [], string $ip = '127.0.0.1'): Response {
+    $request = Request::create('https://beantragt.example.test/auth/sso/' . $path, $method, $parameters, $cookies, [], ['REMOTE_ADDR' => $ip]);
     $request->setSession($this->session);
     return $this->container->get('http_kernel')->handle($request);
   }
 
   /**
-   * Verifies that only the explicitly configured external target is trusted.
+   * Checks the flags and host scope of a correlation or clearing cookie.
+   */
+  private function correlationCookie(Response $response, string $provider = 'bundid'): Cookie {
+    $cookies = array_values(array_filter($response->headers->getCookies(),
+      static fn (Cookie $cookie): bool => $cookie->getName() === '__Host-beantragt_sso_corr_' . $provider));
+    $this->assertCount(1, $cookies);
+    $cookie = $cookies[0];
+    $this->assertSame('/', $cookie->getPath());
+    $this->assertNull($cookie->getDomain());
+    $this->assertTrue($cookie->isSecure());
+    $this->assertTrue($cookie->isHttpOnly());
+    $this->assertSame(Cookie::SAMESITE_NONE, $cookie->getSameSite());
+    return $cookie;
+  }
+
+  /**
+   * Verifies that validated absolute targets retain their authority.
    */
   private function assertRelayRedirect(Response $response, string $expected): void {
     $this->assertSame(302, $response->getStatusCode(), $expected);
     $this->assertSame($expected, $response->headers->get('Location'));
     $this->assertTrue($response->headers->hasCacheControlDirective('no-store'));
-    if (str_starts_with($expected, 'https://ui.example.test:8443/')) {
+    $this->assertSame('', $response->getContent());
+    if (str_starts_with($expected, 'https://ui.example.test:8443/')
+      || str_starts_with($expected, 'https://BEANTRAGT.example.test/')) {
       $this->assertInstanceOf(TrustedRedirectResponse::class, $response);
     }
     else {
@@ -656,6 +1059,34 @@ final class SsoSecurityKernelTest extends KernelTestBase {
       $description = $warning['description']->getUntranslatedString();
       self::assertStringContainsString('BEANTRAGT_SSO_MOCK=true', $description);
       self::assertStringNotContainsString('BEANTRAGT_DEMO_MODE', $description);
+    }
+    finally {
+      foreach ($previous as $name => $value) {
+        putenv($name . ($value === FALSE ? '' : '=' . $value));
+      }
+    }
+  }
+
+  /**
+   * Production reports an enabled mock as an error.
+   */
+  public function testProductionMockRequirements(): void {
+    $values = [
+      'BEANTRAGT_ENV' => 'production',
+      'BEANTRAGT_SSO_MOCK' => 'true',
+    ];
+    $previous = [];
+    foreach ($values as $name => $value) {
+      $previous[$name] = getenv($name);
+      putenv($name . '=' . $value);
+    }
+    try {
+      $manager = $this->container->get('beantragt_sso.provider_manager');
+      $this->assertFalse($manager->mockAllowed());
+      $this->config('beantragt_sso.settings')->set('providers.bundid_mock.enabled', TRUE)->save();
+      require_once DRUPAL_ROOT . '/core/includes/install.inc';
+      $this->container->get('module_handler')->loadInclude('beantragt_sso', 'install');
+      $this->assertSame(REQUIREMENT_ERROR, beantragt_sso_requirements('runtime')['beantragt_sso_mock_provider']['severity']);
     }
     finally {
       foreach ($previous as $name => $value) {

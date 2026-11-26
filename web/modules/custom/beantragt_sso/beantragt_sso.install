@@ -27,9 +27,17 @@ function beantragt_sso_requirements($phase): array {
   }
 
   $provider_manager = \Drupal::service('beantragt_sso.provider_manager');
+  $host = \Drupal::request()->getHost();
   $blocked = [];
+  $invalid_acs = [];
   foreach ($providers as $provider_id => $provider) {
-    if (!is_string($provider_id) || !is_array($provider) || empty($provider['enabled'])) {
+    if (!is_string($provider_id) || !is_array($provider)) {
+      continue;
+    }
+    if (!$provider_manager->hasMatchingAcsUrl($provider_id, $provider, $host)) {
+      $invalid_acs[] = $provider_id;
+    }
+    if (empty($provider['enabled'])) {
       continue;
     }
     if ($provider_manager->isMockProvider($provider) && !$provider_manager->mockAllowed()) {
@@ -37,14 +45,23 @@ function beantragt_sso_requirements($phase): array {
     }
   }
 
+  $requirements = [];
+  if ($invalid_acs !== []) {
+    $requirements['beantragt_sso_acs_url'] = [
+      'title' => new TranslatableMarkup('beantragt SSO ACS URLs'),
+      'value' => new TranslatableMarkup('Misconfigured'),
+      'severity' => REQUIREMENT_ERROR,
+      'description' => new TranslatableMarkup(
+        'The configured ACS URL for @providers must use the public login host and the path /auth/sso/{provider}/acs.',
+        ['@providers' => implode(', ', $invalid_acs)],
+      ),
+    ];
+  }
   if ($blocked === []) {
-    return [];
+    return $requirements;
   }
 
-  // On a dev/DDEV host an enabled-but-disallowed mock provider is a
-  // tolerable misconfiguration (WARNING). On a production host it is a login
-  // bypass: a mock provider would accept demo identities without real SAML, so
-  // escalate to ERROR to block the install/update and force operator action.
+  // An enabled but disallowed mock is more severe in production.
   $is_dev_context = $provider_manager->isDevContext();
   $severity = $is_dev_context ? REQUIREMENT_WARNING : REQUIREMENT_ERROR;
   $description = $is_dev_context
@@ -53,18 +70,17 @@ function beantragt_sso_requirements($phase): array {
         ['@providers' => implode(', ', $blocked)],
       )
     : new TranslatableMarkup(
-        'Mock SSO provider(s) @providers are enabled on a non-development host. Mock providers bypass real SAML authentication and must never be active in production. Disable the provider(s) immediately.',
+        'Mock SSO provider(s) @providers are enabled, but this environment does not allow their use. Mock providers bypass real SAML authentication. Disable the provider(s) immediately.',
         ['@providers' => implode(', ', $blocked)],
       );
 
-  return [
-    'beantragt_sso_mock_provider' => [
-      'title' => new TranslatableMarkup('beantragt SSO mock providers'),
-      'value' => new TranslatableMarkup('Misconfigured'),
-      'severity' => $severity,
-      'description' => $description,
-    ],
+  $requirements['beantragt_sso_mock_provider'] = [
+    'title' => new TranslatableMarkup('beantragt SSO mock providers'),
+    'value' => new TranslatableMarkup('Misconfigured'),
+    'severity' => $severity,
+    'description' => $description,
   ];
+  return $requirements;
 }
 
 /**

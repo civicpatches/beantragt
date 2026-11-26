@@ -20,9 +20,9 @@
         "ext-zip": "*",
         "chillerlan/php-qrcode": "^5.0",
         "composer/installers": "^2",
-        "drupal/core": "~11.4.13",
-        "drupal/core-composer-scaffold": "~11.4.13",
-        "drupal/core-recommended": "~11.4.13",
+        "drupal/core": "~11.4.14",
+        "drupal/core-composer-scaffold": "~11.4.14",
+        "drupal/core-recommended": "~11.4.14",
         "drupal/encrypt": "^3.3",
         "drupal/entity": "^1.8",
         "drupal/field_encrypt": "^4.1",
@@ -39,7 +39,7 @@
         "web-token/jwt-library": "^4"
     },
     "require-dev": {
-        "drupal/core-dev": "~11.4.13"
+        "drupal/core-dev": "~11.4.14"
     },
     "conflict": {
         "drupal/drupal": "*"

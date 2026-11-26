@@ -134,7 +134,7 @@ final class FitConnectDeliveryGateway implements DeliveryGatewayInterface {
       }
       $attachments = $bound
         ? ($selector?->verified($application, (int) $row['form_schema_revision_id'], $envelope->attachmentManifest, (bool) ($row['connection_snapshot']['send_attachments'] ?? FALSE)) ?? [])
-        : $this->loadAttachments($envelope);
+        : $this->loadAttachments($envelope, $application);
       $authorize = function () use ($bound, $row, $application, $settings, $selector, $envelope): void {
         if ($bound) {
           $current = $this->transferPlanner->prepareSend($row, $application);
@@ -301,15 +301,24 @@ final class FitConnectDeliveryGateway implements DeliveryGatewayInterface {
    * @return array<int, array<string, string>>
    *   Transient bytes and metadata, never an outbox value.
    */
-  private function loadAttachments(DeliveryEnvelope $envelope): array {
+  private function loadAttachments(DeliveryEnvelope $envelope, ApplicationInterface $application): array {
     if (count($envelope->attachmentManifest) !== $envelope->attachmentCount) {
       throw new FitConnectTransportException('fit_connect.attachment_unavailable', 'Attachment manifest is incomplete.');
     }
+    if ($envelope->attachmentManifest === []) {
+      return [];
+    }
+    // Old outbox rows may predate original-submission filtering.
+    $selector = $this->transferAttachments ?? new TransferAttachmentSelector($this->entityTypeManager, $this->dataProtection);
+    $originals = array_column($selector->legacyManifest($application), 'id');
     $attachments = [];
     foreach ($envelope->attachmentManifest as $item) {
       $id = (string) ($item['id'] ?? '');
       if (!Uuid::isValid($id)) {
         throw new FitConnectTransportException('fit_connect.attachment_unavailable', 'Attachment identifier is invalid.');
+      }
+      if (!in_array($id, $originals, TRUE)) {
+        throw new FitConnectTransportException('fit_connect.attachment_unavailable', 'Attachment does not belong to the original submission.');
       }
       $matches = $this->entityTypeManager->getStorage('application_attachment')->loadByProperties([
         'uuid' => $id,

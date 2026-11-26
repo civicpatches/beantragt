@@ -14,7 +14,7 @@ use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
 
 /**
- * Coordinates SSO login starts, ACS processing, and dev mock login.
+ * Coordinates SSO login starts, ACS processing, and mock login.
  */
 final class SsoLoginService {
 
@@ -27,24 +27,68 @@ final class SsoLoginService {
     private readonly SsoReplayCache $replayCache,
     private readonly SsoIdentityLinker $identityLinker,
     private readonly LoggerInterface $logger,
+    private readonly SsoRequestCorrelation $requestCorrelation,
   ) {
   }
 
   /**
-   * Builds an SP-initiated login redirect URL.
+   * Builds an SP-initiated login redirect and its correlation cookie.
+   *
+   * @return array{url: string, cookie: \Symfony\Component\HttpFoundation\Cookie|null}
+   *   The login URL and, for SAML, its browser correlation cookie.
    */
-  public function startLogin(string $provider_id, string $relay_state, SessionInterface $session): string {
+  public function startLogin(string $provider_id, string $relay_state, Request $request): array {
     $provider = $this->providerManager->enabledProvider($provider_id);
-    $session->set($this->relayStateKey($provider_id), $relay_state);
+    if (!$this->providerManager->hasMatchingAcsUrl($provider_id, $provider, $request->getHost())) {
+      throw new SsoAuthenticationException('acs_url_misconfigured', 'The configured ACS URL does not match the login host and route.');
+    }
+    $this->providerManager->assertMockAllowed($provider);
     if ($this->providerManager->isMockProvider($provider)) {
-      $this->providerManager->assertMockAllowed($provider);
-      return $this->mockLoginUrl($provider_id, $relay_state);
+      return ['url' => $this->mockLoginUrl($provider_id, $relay_state), 'cookie' => NULL];
     }
 
     $auth = $this->clientFactory->auth($provider_id);
     $url = $auth->login($relay_state, [], FALSE, FALSE, TRUE);
-    $session->set($this->requestIdKey($provider_id), $auth->getLastRequestID());
-    return (string) $url;
+    $request_id = (string) $auth->getLastRequestID();
+    if ($request_id === '') {
+      throw new \RuntimeException('SSO login did not generate a request ID.');
+    }
+    $cookie = $this->requestCorrelation->create($provider_id, $request_id, $relay_state);
+    if ($this->allowsSessionFallback($request)) {
+      $request->getSession()->set($this->requestIdKey($provider_id), ['cookie_key' => $cookie->getValue()]);
+    }
+    return ['url' => (string) $url, 'cookie' => $cookie];
+  }
+
+  /**
+   * Consumes the browser correlation or the development HTTP fallback.
+   *
+   * @return array{request_id: string, relay_state: string}|null
+   *   The request ID and its original return target, if available.
+   */
+  public function consumeRequestCorrelation(string $provider_id, Request $request, SessionInterface $session): ?array {
+    $fallback = $this->allowsSessionFallback($request) ? $session->remove($this->requestIdKey($provider_id)) : NULL;
+    $cookie_name = SsoRequestCorrelation::cookieName($provider_id);
+    if ($request->cookies->has($cookie_name)) {
+      return $this->requestCorrelation->consume($provider_id, $request->cookies->all()[$cookie_name]);
+    }
+    if (is_array($fallback)) {
+      return $this->requestCorrelation->consume($provider_id, $fallback['cookie_key'] ?? NULL);
+    }
+    // Earlier login starts stored the request ID and RelayState separately.
+    if (is_string($fallback) && $fallback !== '') {
+      $key = $this->relayStateKey($provider_id);
+      $relay_state = $session->remove($key);
+      return ['request_id' => $fallback, 'relay_state' => is_string($relay_state) ? $relay_state : '/'];
+    }
+    return NULL;
+  }
+
+  /**
+   * Checks whether the request can fall back to dev HTTP session storage.
+   */
+  private function allowsSessionFallback(Request $request): bool {
+    return !$request->isSecure() && $this->providerManager->isDevContext();
   }
 
   /**
@@ -53,85 +97,63 @@ final class SsoLoginService {
    * @return array<string, mixed>
    *   Authenticated user payload.
    */
-  public function processAcs(string $provider_id, Request $request, SessionInterface $session): array {
+  public function processAcs(string $provider_id, Request $request, SessionInterface $session, ?string $request_id): array {
     $provider = $this->providerManager->enabledProvider($provider_id);
-    $request_id_key = $this->requestIdKey($provider_id);
-
-    try {
-      if ($this->providerManager->isMockProvider($provider)) {
-        throw new BadRequestHttpException('Mock providers do not accept SAMLResponse payloads.');
-      }
-
-      $sso_response = $request->request->get('SAMLResponse');
-      if (!is_string($sso_response) || trim($sso_response) === '') {
-        throw new BadRequestHttpException('Missing SAMLResponse.');
-      }
-
-      $request_id = $session->get($request_id_key);
-      $request_id = is_string($request_id) && $request_id !== '' ? $request_id : NULL;
-      if ($request_id === NULL) {
-        throw new AccessDeniedHttpException('Missing SSO request correlation.');
-      }
-
-      $auth = $this->clientFactory->auth($provider_id);
-      $this->processResponse($auth, $request, $request_id);
-
-      if (!$auth->isAuthenticated()) {
-        throw new AccessDeniedHttpException('SSO response is not authenticated.');
-      }
-
-      // Replay protection needs both identifiers. An empty message or assertion
-      // ID means the response cannot be tracked, so reject it explicitly here.
-      // Without this guard the replay cache would still fail closed, but with
-      // the misleading "already processed" reason.
-      $message_id = (string) $auth->getLastMessageId();
-      $assertion_id = (string) $auth->getLastAssertionId();
-      if ($message_id === '' || $assertion_id === '') {
-        throw new AccessDeniedHttpException('SSO response is missing required identifiers.');
-      }
-
-      if (
-            !$this->replayCache->checkAndStore(
-                $provider_id,
-                $message_id,
-                $assertion_id,
-                $auth->getLastAssertionNotOnOrAfter(),
-            )
-        ) {
-        throw new AccessDeniedHttpException('SSO response was already processed.');
-      }
-
-      $user = $this->identityLinker->authenticate(
-            $provider_id,
-            $provider,
-            (string) $auth->getNameId(),
-            $auth->getAttributes(),
-            $auth->getAttributesWithFriendlyName(),
-        );
+    if ($this->providerManager->isMockProvider($provider)) {
+      throw new BadRequestHttpException('Mock providers do not accept SAMLResponse payloads.');
     }
-    catch (\Throwable $exception) {
-      $session->remove($request_id_key);
-      throw $exception;
+
+    if ($request_id === NULL || $request_id === '') {
+      throw new AccessDeniedHttpException('Missing SSO request correlation.');
     }
+
+    $sso_response = $request->request->get('SAMLResponse');
+    if (!is_string($sso_response) || trim($sso_response) === '') {
+      throw new BadRequestHttpException('Missing SAMLResponse.');
+    }
+
+    $auth = $this->clientFactory->auth($provider_id);
+    $this->processResponse($auth, $request, $request_id);
+
+    if (!$auth->isAuthenticated()) {
+      throw new AccessDeniedHttpException('SSO response is not authenticated.');
+    }
+
+    // Replay protection needs both identifiers. An empty message or assertion
+    // ID means the response cannot be tracked, so reject it explicitly here.
+    // Without this guard the replay cache would still fail closed, but with
+    // the misleading "already processed" reason.
+    $message_id = (string) $auth->getLastMessageId();
+    $assertion_id = (string) $auth->getLastAssertionId();
+    if ($message_id === '' || $assertion_id === '') {
+      throw new AccessDeniedHttpException('SSO response is missing required identifiers.');
+    }
+
+    if (
+          !$this->replayCache->checkAndStore(
+              $provider_id,
+              $message_id,
+              $assertion_id,
+              $auth->getLastAssertionNotOnOrAfter(),
+          )
+      ) {
+      throw new AccessDeniedHttpException('SSO response was already processed.');
+    }
+
+    $user = $this->identityLinker->authenticate(
+          $provider_id,
+          $provider,
+          (string) $auth->getNameId(),
+          $auth->getAttributes(),
+          $auth->getAttributesWithFriendlyName(),
+      );
 
     $this->storeLastLogin($session, $provider_id, $user);
-    $session->remove($request_id_key);
     return $user;
   }
 
   /**
-   * Consumes the RelayState that was stored when login started.
-   */
-  public function consumeRelayState(string $provider_id, SessionInterface $session): string {
-    $key = $this->relayStateKey($provider_id);
-    $relay_state = $session->get($key);
-    $session->remove($key);
-
-    return is_string($relay_state) && $relay_state !== '' ? $relay_state : '/';
-  }
-
-  /**
-   * Performs a dev-only mock login with real Drupal session finalizing.
+   * Performs a mock login with real Drupal session finalizing.
    *
    * @return array<string, mixed>
    *   Authenticated user payload.
@@ -159,14 +181,14 @@ final class SsoLoginService {
 
     $user = $this->identityLinker->authenticate($provider_id, $provider, $name_id, $attributes, $attributes);
     $this->storeLastLogin($session, $provider_id, $user);
-    $this->logger->notice('Dev-only SSO mock login executed for @provider.', ['@provider' => $provider_id]);
+    $this->logger->notice('SSO mock login executed for @provider.', ['@provider' => $provider_id]);
     return $user;
   }
 
   /**
    * Processes the response through php-saml without trusting raw globals.
    */
-  private function processResponse(Auth $auth, Request $request, ?string $request_id): void {
+  private function processResponse(Auth $auth, Request $request, string $request_id): void {
     // OneLogin php-saml reads the POST binding from $_POST. Keep the global
     // shim isolated and restore it immediately after processing.
       // phpcs:disable DrupalPractice.Variables.GetRequestData.SuperglobalAccessed,DrupalPractice.Variables.GetRequestData.SuperglobalAccessedWithVar
@@ -202,7 +224,7 @@ final class SsoLoginService {
   }
 
   /**
-   * Builds the local URL for dev mock login completion.
+   * Builds the local URL for mock login completion.
    *
    * @param string $provider_id
    *   Provider machine name.

@@ -14,17 +14,20 @@ use Drupal\beantragt_sso\Service\SsoLoginService;
 use Drupal\beantragt_sso\Service\SsoProviderManager;
 use Drupal\beantragt_sso\Service\SsoRelayStateValidator;
 use Drupal\beantragt_sso\Service\SsoReplayCache;
+use Drupal\beantragt_sso\Service\SsoRequestCorrelation;
 use Drupal\Component\Datetime\TimeInterface;
 use Drupal\Core\Config\Config;
 use Drupal\Core\Config\ConfigFactoryInterface;
+use Drupal\Core\Flood\FloodInterface;
 use Drupal\Core\Database\Connection;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\Core\KeyValueStore\KeyValueExpirableFactoryInterface;
+use Drupal\Core\KeyValueStore\KeyValueStoreExpirableInterface;
 use Drupal\Core\Lock\LockBackendInterface;
 use Drupal\Tests\UnitTestCase;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
-use Symfony\Component\HttpKernel\Exception\HttpException;
 use Symfony\Component\HttpFoundation\RequestStack;
 use Symfony\Component\HttpFoundation\Session\Session;
 use Symfony\Component\HttpFoundation\Session\Storage\MockArraySessionStorage;
@@ -37,40 +40,33 @@ use Symfony\Component\HttpFoundation\Session\Storage\MockArraySessionStorage;
 final class SsoAuthControllerTest extends UnitTestCase {
 
   /**
-   * Failed ACS responses redirect back to the SPA with a generic marker.
+   * Failed ACS responses redirect to the stored target with a public code.
    */
-  public function testAcsFailureRedirectsToRelayStateWithErrorMarker(): void {
-    $correlation = NULL;
-    $logger = $this->createMock(LoggerInterface::class);
-    $logger->expects(self::once())
-      ->method('log')
-      ->with(
-        'warning',
-        'SSO failure @code (correlation @correlation).',
-        self::callback(static function (array $context) use (&$correlation): bool {
-          $correlation = $context['@correlation'];
-          return $context['@code'] === 'acs_rejected'
-            && preg_match('/^[a-f0-9]{32}$/', $context['@correlation']) === 1
-            && array_keys($context) === ['@code', '@correlation'];
-        }),
-      );
-    $controller = $this->controller($logger);
+  public function testAcsFailureRedirectsToStoredRelayState(): void {
+    $logger = $this->safeFailureLogger('acs_rejected', 'warning');
+    $target = 'https://beantragt.ddev.site:3001/musterstadt/meine-antraege';
+    $store = $this->createMock(KeyValueStoreExpirableInterface::class);
+    $key = str_repeat('a', 64);
+    $store->method('get')->with(hash('sha256', $key))->willReturn([
+      'provider' => 'bundid',
+      'request_id' => 'request-id',
+      'relay_state' => $target,
+      'expires' => 600,
+    ]);
+    $store->expects($this->once())->method('delete')->with(hash('sha256', $key));
+    $controller = $this->controller($logger, $store);
     $request = Request::create('/auth/sso/bundid/acs', 'POST');
-    $session = new Session(new MockArraySessionStorage());
-    $session->set(
-      'beantragt_sso.bundid.relay_state',
-      'https://beantragt.ddev.site:3001/musterstadt/meine-antraege',
-    );
-    $request->setSession($session);
+    $request->cookies->set(SsoRequestCorrelation::cookieName('bundid'), $key);
+    $request->setSession(new Session(new MockArraySessionStorage()));
 
     $response = $controller->acs($request, 'bundid');
 
     $this->assertSame(302, $response->getStatusCode());
     $this->assertSame(
-      'https://beantragt.ddev.site:3001/musterstadt/meine-antraege?sso_error=1&sso_code=acs_rejected&sso_correlation=' . $correlation,
+      $target . '?sso_error=acs_rejected',
       $response->headers->get('Location'),
     );
-    $this->assertFalse($session->has('beantragt_sso.bundid.relay_state'));
+    $this->assertSame('', $response->getContent());
   }
 
   /**
@@ -78,17 +74,14 @@ final class SsoAuthControllerTest extends UnitTestCase {
    */
   public function testInitiationLogsOnlyCodeAndCorrelation(): void {
     $logger = $this->safeFailureLogger('login_start_failed', 'error');
-    $request = Request::create('/auth/sso/bundid/login');
+    $request = Request::create('/auth/sso/bundid/login?returnTo=%2Fmy-applications');
     $session = $this->createMock(Session::class);
     $session->method('set')->willThrowException(new \RuntimeException('database-error-sentinel citizen@example.test'));
     $request->setSession($session);
-    try {
-      $this->controller($logger)->login($request, 'bundid');
-      $this->fail('Initiation failure was accepted.');
-    }
-    catch (HttpException $exception) {
-      $this->assertSame('SSO login is not available.', $exception->getMessage());
-    }
+    $response = $this->controller($logger)->login($request, 'bundid');
+    $this->assertSame('/my-applications?sso_error=login_failed', $response->headers->get('Location'));
+    $this->assertTrue($response->headers->hasCacheControlDirective('no-store'));
+    $this->assertSame('', $response->getContent());
   }
 
   /**
@@ -101,28 +94,27 @@ final class SsoAuthControllerTest extends UnitTestCase {
     $session->method('get')->willThrowException(new \RuntimeException('hostile-saml-status database-error-sentinel citizen@example.test'));
     $request->setSession($session);
     $response = $this->mockLogin($request, $logger);
-    $this->assertMatchesRegularExpression('~^/\?sso_error=1&sso_code=mock_login_failed&sso_correlation=[a-f0-9]{32}$~', $response->headers->get('Location'));
+    $this->assertSame('/auth/login?sso_error=login_failed', $response->headers->get('Location'));
   }
 
   /**
-   * Typed failures keep their category in both the log and redirect.
+   * Redirects expose only public categories and logs keep internal codes.
    */
   public function testTypedFailuresReachRedirect(): void {
-    foreach (['identity_disabled', 'account_ineligible', 'account_privileged', 'identity_busy', 'bad_signature'] as $code) {
-      $correlation = NULL;
-      $logger = $this->createMock(LoggerInterface::class);
-      $logger->expects($this->once())->method('log')->with('warning',
-        'SSO failure @code (correlation @correlation).',
-        $this->callback(static function (array $context) use ($code, &$correlation): bool {
-          $correlation = $context['@correlation'];
-          return $context['@code'] === $code;
-        }));
+    foreach ([
+      'identity_disabled' => 'account_ineligible',
+      'account_ineligible' => 'account_ineligible',
+      'account_privileged' => 'account_privileged',
+      'identity_busy' => 'unavailable',
+      'bad_signature' => 'acs_rejected',
+    ] as $code => $public_code) {
+      $logger = $this->safeFailureLogger($code, 'warning');
       $request = Request::create('/auth/sso/bundid_mock/mock-login');
       $session = $this->createMock(Session::class);
       $session->method('get')->willThrowException(new SsoAuthenticationException($code, 'hostile-saml-status'));
       $request->setSession($session);
       $response = $this->mockLogin($request, $logger);
-      $this->assertSame('/?sso_error=1&sso_code=' . $code . '&sso_correlation=' . $correlation, $response->headers->get('Location'));
+      $this->assertSame('/auth/login?sso_error=' . $public_code, $response->headers->get('Location'));
     }
   }
 
@@ -161,7 +153,7 @@ final class SsoAuthControllerTest extends UnitTestCase {
   /**
    * Builds the controller with real services until ACS validation fails.
    */
-  private function controller(?LoggerInterface $logger = NULL): SsoAuthController {
+  private function controller(?LoggerInterface $logger = NULL, ?KeyValueStoreExpirableInterface $store = NULL): SsoAuthController {
     $provider_manager = new SsoProviderManager($this->configFactory());
     $request_stack = new RequestStack();
     $client_factory = new SsoClientFactory($provider_manager, $request_stack);
@@ -178,14 +170,21 @@ final class SsoAuthControllerTest extends UnitTestCase {
       $this->createMock(VerifiedAccountMail::class),
       $this->createMock(LockBackendInterface::class),
     );
+    $factory = $this->createMock(KeyValueExpirableFactoryInterface::class);
+    $factory->method('get')->willReturn($store ?? $this->createMock(KeyValueStoreExpirableInterface::class));
+    $lock = $this->createMock(LockBackendInterface::class);
+    $lock->method('acquire')->willReturn(TRUE);
     $login_service = new SsoLoginService(
       $provider_manager,
       $client_factory,
       $replay_cache,
       $identity_linker,
       $this->createMock(LoggerInterface::class),
+      new SsoRequestCorrelation($factory, $lock, $this->createMock(TimeInterface::class)),
     );
 
+    $flood = $this->createMock(FloodInterface::class);
+    $flood->method('isAllowed')->willReturn(TRUE);
     return new SsoAuthController(
       $provider_manager,
       $client_factory,
@@ -196,6 +195,8 @@ final class SsoAuthControllerTest extends UnitTestCase {
         $this->createMock(LoggerInterface::class),
       ),
       $logger ?? $this->createMock(LoggerInterface::class),
+      $flood,
+      $this->configFactory(),
     );
   }
 

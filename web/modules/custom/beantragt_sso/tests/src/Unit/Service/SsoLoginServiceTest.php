@@ -11,15 +11,19 @@ use Drupal\beantragt_sso\Service\SsoIdentityLinker;
 use Drupal\beantragt_sso\Service\SsoLoginService;
 use Drupal\beantragt_sso\Service\SsoProviderManager;
 use Drupal\beantragt_sso\Service\SsoReplayCache;
+use Drupal\beantragt_sso\Service\SsoRequestCorrelation;
 use Drupal\Component\Datetime\TimeInterface;
 use Drupal\Core\Config\Config;
 use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Database\Connection;
 use Drupal\Core\Entity\EntityTypeManagerInterface;
+use Drupal\Core\KeyValueStore\KeyValueExpirableFactoryInterface;
+use Drupal\Core\KeyValueStore\KeyValueStoreExpirableInterface;
 use Drupal\Core\Lock\LockBackendInterface;
 use Drupal\Tests\UnitTestCase;
 use OneLogin\Saml2\Auth;
 use OneLogin\Saml2\ValidationError;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Drupal\beantragt_sso\Exception\SsoAuthenticationException;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpFoundation\Request;
@@ -56,54 +60,46 @@ final class SsoLoginServiceTest extends UnitTestCase {
     $session = new Session(new MockArraySessionStorage());
 
     $this->expectException(AccessDeniedHttpException::class);
-    $service->processAcs('bundid', $request, $session);
+    $this->expectExceptionMessage('Missing SSO request correlation.');
+    $service->processAcs('bundid', $request, $session, NULL);
   }
 
   /**
-   * Failed ACS attempts consume the stored request id.
+   * Only dev HTTP callbacks without a cookie can consume a legacy session ID.
    */
-  public function testFailedAcsConsumesStoredRequestId(): void {
-    $service = $this->loginService();
-    $request = Request::create('/auth/sso/bundid/acs', 'POST', [
-      'SAMLResponse' => 'not-valid-saml',
-      'RelayState' => '/meine-antraege',
-    ]);
-    $session = new Session(new MockArraySessionStorage());
-    $session->set('beantragt_sso.bundid.request_id', 'request-123');
-
-    $exception = NULL;
+  #[DataProvider('sessionFallbackCases')]
+  public function testSessionFallback(string $environment, string $scheme, bool $with_cookie, bool $allowed): void {
+    $previous = getenv('BEANTRAGT_ENV');
+    putenv('BEANTRAGT_ENV=' . $environment);
     try {
-      $service->processAcs('bundid', $request, $session);
+      $service = $this->loginService();
+      $request = Request::create($scheme . '://localhost/auth/sso/bundid/acs', 'POST');
+      if ($with_cookie) {
+        $request->cookies->set(SsoRequestCorrelation::cookieName('bundid'), '');
+      }
+      $session = new Session(new MockArraySessionStorage());
+      $session->set('beantragt_sso.bundid.request_id', 'request-123');
+      $session->set('beantragt_sso.bundid.relay_state', '/meine-antraege');
+      $expected = $allowed ? ['request_id' => 'request-123', 'relay_state' => '/meine-antraege'] : NULL;
+      $this->assertSame($expected, $service->consumeRequestCorrelation('bundid', $request, $session));
+      $this->assertNull($service->consumeRequestCorrelation('bundid', $request, $session));
     }
-    catch (\Throwable $caught) {
-      $exception = $caught;
+    finally {
+      putenv('BEANTRAGT_ENV' . ($previous === FALSE ? '' : '=' . $previous));
     }
-
-    $this->assertInstanceOf(\Throwable::class, $exception);
-    $this->assertFalse($session->has('beantragt_sso.bundid.request_id'));
   }
 
   /**
-   * Malformed ACS posts also consume the stored request id.
+   * Returns dev and production fallback cases.
    */
-  public function testMalformedAcsConsumesStoredRequestId(): void {
-    $service = $this->loginService();
-    $request = Request::create('/auth/sso/bundid/acs', 'POST', [
-      'RelayState' => '/meine-antraege',
-    ]);
-    $session = new Session(new MockArraySessionStorage());
-    $session->set('beantragt_sso.bundid.request_id', 'request-123');
-
-    $exception = NULL;
-    try {
-      $service->processAcs('bundid', $request, $session);
-    }
-    catch (\Throwable $caught) {
-      $exception = $caught;
-    }
-
-    $this->assertInstanceOf(\Throwable::class, $exception);
-    $this->assertFalse($session->has('beantragt_sso.bundid.request_id'));
+  public static function sessionFallbackCases(): array {
+    return [
+      'dev http' => ['dev', 'http', FALSE, TRUE],
+      'dev http with invalid cookie' => ['dev', 'http', TRUE, FALSE],
+      'dev https' => ['dev', 'https', FALSE, FALSE],
+      'production http' => ['production', 'http', FALSE, FALSE],
+      'production https' => ['production', 'https', FALSE, FALSE],
+    ];
   }
 
   /**
@@ -154,17 +150,16 @@ final class SsoLoginServiceTest extends UnitTestCase {
 
     };
 
-    $service = $this->loginServiceWithAuth($auth);
+    $service = $this->loginService($auth);
     $request = Request::create('/auth/sso/bundid/acs', 'POST', [
       'SAMLResponse' => 'valid-but-idless',
       'RelayState' => '/meine-antraege',
     ]);
     $session = new Session(new MockArraySessionStorage());
-    $session->set('beantragt_sso.bundid.request_id', 'request-123');
 
     $exception = NULL;
     try {
-      $service->processAcs('bundid', $request, $session);
+      $service->processAcs('bundid', $request, $session, 'request-123');
     }
     catch (\Throwable $caught) {
       $exception = $caught;
@@ -172,7 +167,6 @@ final class SsoLoginServiceTest extends UnitTestCase {
 
     $this->assertInstanceOf(AccessDeniedHttpException::class, $exception);
     $this->assertSame('SSO response is missing required identifiers.', $exception->getMessage());
-    $this->assertFalse($session->has('beantragt_sso.bundid.request_id'));
   }
 
   /**
@@ -208,15 +202,14 @@ final class SsoLoginServiceTest extends UnitTestCase {
       }
 
     };
-    $service = $this->loginServiceWithAuth($auth);
+    $service = $this->loginService($auth);
     $request = Request::create('/auth/sso/bundid/acs', 'POST', [
       'SAMLResponse' => 'malformed',
     ]);
     $session = new Session(new MockArraySessionStorage());
-    $session->set('beantragt_sso.bundid.request_id', 'request-123');
 
     try {
-      $service->processAcs('bundid', $request, $session);
+      $service->processAcs('bundid', $request, $session, 'request-123');
       self::fail('Expected malformed SAML response to be rejected.');
     }
     catch (AccessDeniedHttpException $exception) {
@@ -236,12 +229,11 @@ final class SsoLoginServiceTest extends UnitTestCase {
       $auth = $this->getMockBuilder(Auth::class)->disableOriginalConstructor()->getMock();
       $auth->method('getErrors')->willReturn(['invalid_response']);
       $auth->method('getLastErrorException')->willReturn(new ValidationError('hostile-saml-status', $error_code));
-      $service = $this->loginServiceWithAuth($auth);
+      $service = $this->loginService($auth);
       $request = Request::create('/auth/sso/bundid/acs', 'POST', ['SAMLResponse' => 'invalid']);
       $session = new Session(new MockArraySessionStorage());
-      $session->set('beantragt_sso.bundid.request_id', 'request-123');
       try {
-        $service->processAcs('bundid', $request, $session);
+        $service->processAcs('bundid', $request, $session, 'request-123');
         $this->fail('Bad signature was accepted.');
       }
       catch (SsoAuthenticationException $exception) {
@@ -259,72 +251,22 @@ final class SsoLoginServiceTest extends UnitTestCase {
     putenv('IS_DDEV_PROJECT=true');
 
     $service = $this->loginService();
-    $session = new Session(new MockArraySessionStorage());
+    $login = $service->startLogin('bundid_mock', '/meine-antraege', Request::create('/auth/sso/bundid_mock/login'));
 
-    $this->assertSame(
-      '/auth/sso/bundid_mock/mock-idp?RelayState=%2Fmeine-antraege',
-      $service->startLogin('bundid_mock', '/meine-antraege', $session),
-    );
+    $this->assertSame('/auth/sso/bundid_mock/mock-idp?RelayState=%2Fmeine-antraege', $login['url']);
+    $this->assertNull($login['cookie']);
   }
 
   /**
-   * ACS redirects use the RelayState captured at login start.
+   * Builds the service with an optional SAML toolkit stub.
    */
-  public function testRelayStateIsConsumedFromStartedLogin(): void {
-    putenv('BEANTRAGT_SSO_MOCK=true');
-    putenv('IS_DDEV_PROJECT=true');
-
-    $service = $this->loginService();
-    $session = new Session(new MockArraySessionStorage());
-
-    $service->startLogin('bundid_mock', '/meine-antraege', $session);
-
-    $this->assertSame('/meine-antraege', $service->consumeRelayState('bundid_mock', $session));
-    $this->assertSame('/', $service->consumeRelayState('bundid_mock', $session));
-  }
-
-  /**
-   * Builds the service with real collaborators that are not reached here.
-   */
-  private function loginService(): SsoLoginService {
+  private function loginService(?Auth $auth = NULL): SsoLoginService {
     $providerManager = new SsoProviderManager($this->configFactory());
     $clientFactory = new SsoClientFactory($providerManager, new RequestStack());
-    $replayCache = new SsoReplayCache(
-      $this->createMock(Connection::class),
-      $this->createMock(TimeInterface::class),
-    );
-    $identityLinker = new SsoIdentityLinker(
-      $this->createMock(Connection::class),
-      $this->createMock(EntityTypeManagerInterface::class),
-      $this->createMock(ApplicantManager::class),
-      $this->createMock(LoggerInterface::class),
-      NULL,
-      $this->createMock(VerifiedAccountMail::class),
-      $this->createMock(LockBackendInterface::class),
-    );
-
-    return new SsoLoginService(
-      $providerManager,
-      $clientFactory,
-      $replayCache,
-      $identityLinker,
-      $this->createMock(LoggerInterface::class),
-    );
-  }
-
-  /**
-   * Builds the service with a client factory that returns a stub Auth.
-   *
-   * @param \OneLogin\Saml2\Auth $auth
-   *   Pre-built Auth stub returned for any provider.
-   */
-  private function loginServiceWithAuth(Auth $auth): SsoLoginService {
-    $providerManager = new SsoProviderManager($this->configFactory());
-    $clientFactory = $this->getMockBuilder(SsoClientFactory::class)
-      ->setConstructorArgs([$providerManager, new RequestStack()])
-      ->onlyMethods(['auth'])
-      ->getMock();
-    $clientFactory->method('auth')->willReturn($auth);
+    if ($auth !== NULL) {
+      $clientFactory = $this->createMock(SsoClientFactory::class);
+      $clientFactory->method('auth')->willReturn($auth);
+    }
 
     $replayCache = new SsoReplayCache(
       $this->createMock(Connection::class),
@@ -340,12 +282,15 @@ final class SsoLoginServiceTest extends UnitTestCase {
       $this->createMock(LockBackendInterface::class),
     );
 
+    $factory = $this->createMock(KeyValueExpirableFactoryInterface::class);
+    $factory->method('get')->willReturn($this->createMock(KeyValueStoreExpirableInterface::class));
     return new SsoLoginService(
       $providerManager,
       $clientFactory,
       $replayCache,
       $identityLinker,
       $this->createMock(LoggerInterface::class),
+      new SsoRequestCorrelation($factory, $this->createMock(LockBackendInterface::class), $this->createMock(TimeInterface::class)),
     );
   }
 

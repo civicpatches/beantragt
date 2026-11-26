@@ -26,9 +26,9 @@ final class SsoRelayStateValidator {
   /**
    * Returns a safe RelayState target or the provider default.
    */
-  public function sanitize(string $provider_id, mixed $relay_state): string {
+  public function sanitize(string $provider_id, mixed $relay_state, ?string $fallback = NULL): string {
     $provider = $this->provider($provider_id);
-    $default = $this->defaultRelayPath($provider);
+    $default = $fallback ?? $this->defaultRelayPath($provider);
     if (!is_string($relay_state) || trim($relay_state) === '') {
       return $default;
     }
@@ -44,7 +44,9 @@ final class SsoRelayStateValidator {
     }
 
     $request = $this->requestStack->getCurrentRequest();
-    if ($authority[0] === strtolower($request?->getHost() ?? '') || $this->isAllowedRelayHost($provider_id, $target)) {
+    [$host, $port] = $authority;
+    if (($request !== NULL && $host === strtolower($request->getHost()) && $port === (int) $request->getPort())
+        || $this->isAllowedRelayHost($provider_id, $target)) {
       return $target;
     }
 
@@ -62,12 +64,11 @@ final class SsoRelayStateValidator {
       return FALSE;
     }
 
-    [$host, $port] = $authority;
-    $host_with_port = $port !== NULL ? "$host:$port" : $host;
+    [$host, $port, $default_port] = $authority;
     $provider = $this->provider($provider_id);
     foreach (($provider['allowed_relay_hosts'] ?? []) as $allowed_host) {
       $allowed_host = is_scalar($allowed_host) ? strtolower(trim((string) $allowed_host)) : '';
-      if ($allowed_host === $host || $allowed_host === $host_with_port) {
+      if ($allowed_host === "$host:$port" || ($allowed_host === $host && $port === $default_port)) {
         return TRUE;
       }
     }
@@ -77,8 +78,8 @@ final class SsoRelayStateValidator {
   /**
    * Parses a valid HTTP(S) RelayState authority.
    *
-   * @return array{string, int|null}|null
-   *   Lowercase host and optional port, or NULL for an invalid target.
+   * @return array{string, int, int}|null
+   *   Lowercase host, effective port, and scheme default port, or NULL.
    */
   private function absoluteRelayAuthority(string $target): ?array {
     if (preg_match('/[\x00-\x1F\x7F\\\\]/', $target)
@@ -87,13 +88,14 @@ final class SsoRelayStateValidator {
     }
 
     $host = strtolower($parts[2]);
-    $port = isset($parts[3]) ? (int) $parts[3] : NULL;
-    if (($port !== NULL && ($port < 1 || $port > 65535))
-        || (strtolower($parts[1]) !== 'https' && !$this->isLocalHost($host))) {
+    $is_https = strtolower($parts[1]) === 'https';
+    $default_port = $is_https ? 443 : 80;
+    $port = isset($parts[3]) ? (int) $parts[3] : $default_port;
+    if ($port < 1 || $port > 65535 || (!$is_https && !$this->isLocalHost($host))) {
       return NULL;
     }
 
-    return [$host, $port];
+    return [$host, $port, $default_port];
   }
 
   /**

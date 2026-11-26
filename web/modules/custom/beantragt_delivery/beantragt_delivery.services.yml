@@ -15,7 +15,6 @@ services:
   beantragt_delivery.envelope_builder:
     class: Drupal\beantragt_delivery\Service\DeliveryEnvelopeBuilder
     arguments:
-      - '@entity_type.manager'
       - '@beantragt_delivery.transfer_attachment_selector'
 
   beantragt_delivery.local_mock_receiver:

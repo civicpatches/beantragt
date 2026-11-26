@@ -4,22 +4,30 @@ declare(strict_types=1);
 
 namespace Drupal\beantragt_sso\Controller;
 
+use Drupal\beantragt_sso\Exception\SsoAuthenticationException;
 use Drupal\beantragt_sso\Service\SsoClientFactory;
 use Drupal\beantragt_sso\Service\SsoFailureLog;
 use Drupal\beantragt_sso\Service\SsoLoginService;
 use Drupal\beantragt_sso\Service\SsoProviderManager;
 use Drupal\beantragt_sso\Service\SsoRelayStateValidator;
+use Drupal\beantragt_sso\Service\SsoRequestCorrelation;
 use Drupal\Component\Utility\Html;
 use Drupal\Component\Utility\UrlHelper;
+use Drupal\Core\Config\ConfigFactoryInterface;
 use Drupal\Core\Controller\ControllerBase;
+use Drupal\Core\Flood\FloodInterface;
 use Drupal\Core\Routing\TrustedRedirectResponse;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\ContainerInterface;
+use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpFoundation\Session\SessionInterface;
+use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 /**
  * Handles generic SSO service provider endpoints.
@@ -35,7 +43,10 @@ final class SsoAuthController extends ControllerBase {
     private readonly SsoLoginService $loginService,
     private readonly SsoRelayStateValidator $relayState,
     private readonly LoggerInterface $logger,
+    private readonly FloodInterface $flood,
+    ConfigFactoryInterface $config_factory,
   ) {
+    $this->configFactory = $config_factory;
   }
 
   /**
@@ -48,6 +59,8 @@ final class SsoAuthController extends ControllerBase {
           $container->get('beantragt_sso.login_service'),
           $container->get('beantragt_sso.relay_state'),
           $container->get('logger.channel.beantragt_sso'),
+          $container->get('flood'),
+          $container->get('config.factory'),
       );
   }
 
@@ -55,8 +68,8 @@ final class SsoAuthController extends ControllerBase {
    * Returns SP metadata XML for a provider.
    */
   public function metadata(string $provider): Response {
-    $this->providerManager->provider($provider);
     try {
+      $this->providerManager->provider($provider);
       $settings = $this->clientFactory->settings($provider, TRUE);
       $metadata = $settings->getSPMetadata();
       $errors = $settings->validateMetadata($metadata);
@@ -66,7 +79,8 @@ final class SsoAuthController extends ControllerBase {
     }
     catch (\Throwable $exception) {
       SsoFailureLog::log($this->logger, 'error', 'metadata_unavailable', $provider);
-      throw new HttpException(500, 'SSO metadata is not available.');
+      $status = $exception instanceof HttpExceptionInterface ? $exception->getStatusCode() : 500;
+      return $this->errorJson('metadata_unavailable', $status);
     }
 
     return $this->noStore(new Response($metadata, 200, [
@@ -77,23 +91,40 @@ final class SsoAuthController extends ControllerBase {
   /**
    * Starts SP-initiated SSO login.
    */
-  public function login(Request $request, string $provider): TrustedRedirectResponse {
-    $this->providerManager->enabledProvider($provider);
-    $relay_state = $this->relayState->sanitize(
-          $provider,
-          $request->query->get('returnTo') ?: $request->query->get('RelayState'),
-      );
-
+  public function login(Request $request, string $provider): Response {
+    $query = $request->query->all();
+    $target = ($query['returnTo'] ?? NULL) ?: ($query['RelayState'] ?? NULL);
     try {
-      $url = $this->loginService->startLogin($provider, $relay_state, $this->session($request));
+      $this->providerManager->enabledProvider($provider);
+      $settings = $this->config('beantragt_sso.settings');
+      $limit = (int) ($settings->get('login_flood_limit') ?? 30);
+      $window = (int) ($settings->get('login_flood_window') ?? 600);
+      $ip = $request->getClientIp() ?? 'unknown';
+      $event = 'beantragt_sso.login';
+      if (!$this->flood->isAllowed($event, $limit, $window, $ip)) {
+        return $this->errorRedirect($request, $provider, $target, 'rate_limited');
+      }
+      $this->flood->register($event, $window, $ip);
+
+      $relay_state = $this->relayState->sanitize($provider, $target);
+      $login = $this->loginService->startLogin($provider, $relay_state, $request);
+    }
+    catch (NotFoundHttpException | AccessDeniedHttpException) {
+      return $this->errorRedirect($request, $provider, $target, 'provider_unavailable');
     }
     catch (\Throwable $exception) {
-      SsoFailureLog::log($this->logger, 'error', 'login_start_failed', $provider);
-      throw new HttpException(500, 'SSO login is not available.');
+      $code = SsoFailureLog::code($exception, 'login_start_failed');
+      SsoFailureLog::log($this->logger, 'error', $code, $provider);
+      return $this->errorRedirect($request, $provider, $target, $code);
     }
 
     // The login service uses the configured IdP URL or a local mock URL.
-    $response = new TrustedRedirectResponse($url);
+    $request->query->remove('destination');
+    $response = new TrustedRedirectResponse($login['url']);
+    if ($login['cookie'] !== NULL) {
+      $response->headers->setCookie($login['cookie']);
+    }
+    $response->setContent('');
     $response->getCacheableMetadata()->setCacheMaxAge(0);
     $this->noStore($response);
     return $response;
@@ -103,49 +134,59 @@ final class SsoAuthController extends ControllerBase {
    * Handles SSO ACS POST responses.
    */
   public function acs(Request $request, string $provider): RedirectResponse {
-    $session = $this->session($request);
-    $target = $this->relayState->sanitize($provider, $this->loginService->consumeRelayState($provider, $session));
+    $target = NULL;
     try {
-      $this->loginService->processAcs($provider, $request, $session);
+      $session = $this->session($request);
+      $request_correlation = $this->loginService->consumeRequestCorrelation($provider, $request, $session);
+      $target = $request_correlation['relay_state'] ?? NULL;
+      $this->loginService->processAcs($provider, $request, $session, $request_correlation['request_id'] ?? NULL);
+      $response = $this->relayRedirect($request, $this->relayState->sanitize($provider, $target));
     }
     catch (\Throwable $exception) {
       $code = SsoFailureLog::code($exception, 'acs_rejected');
-      $correlation = SsoFailureLog::log($this->logger, 'warning', $code, $provider);
-      return $this->relayRedirect($request, $provider, $this->withSsoError($target, $code, $correlation));
+      SsoFailureLog::log($this->logger, 'warning', $code, $provider);
+      $response = $this->errorRedirect($request, $provider, $target, $code);
     }
 
-    return $this->relayRedirect($request, $provider, $target);
+    $response->headers->setCookie(SsoRequestCorrelation::clearedCookie($provider));
+    return $response;
   }
 
   /**
-   * Executes a dev-only mock login and returns to RelayState.
+   * Executes a mock login and returns to RelayState.
    */
   public function mockLogin(Request $request, string $provider): RedirectResponse {
-    $provider_config = $this->providerManager->enabledProvider($provider);
-    if (!$this->providerManager->isMockProvider($provider_config)) {
-      throw new HttpException(400, 'Provider is not configured as a mock provider.');
-    }
-    $this->providerManager->assertMockAllowed($provider_config);
-
-    $session = $this->session($request);
-    $target = $this->relayState->sanitize($provider, $request->query->get('RelayState'));
+    $target = $request->query->all()['RelayState'] ?? NULL;
     try {
+      $provider_config = $this->providerManager->enabledProvider($provider);
+      if (!$this->providerManager->isMockProvider($provider_config)) {
+        return $this->errorRedirect($request, $provider, $target, 'mock_not_allowed');
+      }
+      $this->providerManager->assertMockAllowed($provider_config);
+
+      $session = $this->session($request);
+      $relay_state = $this->relayState->sanitize($provider, $target);
       $this->consumeMockState($request, $provider, $session);
       $this->loginService->mockLogin($provider, $session);
     }
+    catch (NotFoundHttpException | AccessDeniedHttpException) {
+      return $this->errorRedirect($request, $provider, $target, 'provider_unavailable');
+    }
     catch (\Throwable $exception) {
       $code = SsoFailureLog::code($exception, 'mock_login_failed');
-      $correlation = SsoFailureLog::log($this->logger, 'warning', $code, $provider);
-      return $this->relayRedirect($request, $provider, $this->withSsoError($target, $code, $correlation));
+      SsoFailureLog::log($this->logger, 'warning', $code, $provider);
+      return $this->errorRedirect($request, $provider, $target, $code);
     }
-    return $this->relayRedirect($request, $provider, $target);
+    return $this->relayRedirect($request, $relay_state);
   }
 
   /**
-   * Trusts an external RelayState redirect only for an operator-approved host.
+   * Redirects to a target already validated by the RelayState validator.
    */
-  private function relayRedirect(Request $request, string $provider, string $target): RedirectResponse {
-    if ($this->relayState->isAllowedRelayHost($provider, $target)
+  private function relayRedirect(Request $request, string $target): RedirectResponse {
+    // Drupal's redirect subscriber can otherwise override validated RelayState.
+    $request->query->remove('destination');
+    if (preg_match('~^https?://~i', $target) === 1
         && !UrlHelper::externalIsLocal($target, $request->getSchemeAndHttpHost() . $request->getBasePath() . '/')) {
       $response = new TrustedRedirectResponse($target);
       $response->getCacheableMetadata()->setCacheMaxAge(0);
@@ -153,22 +194,47 @@ final class SsoAuthController extends ControllerBase {
     else {
       $response = new RedirectResponse($target);
     }
+    $response->setContent('');
     $this->noStore($response);
     return $response;
   }
 
   /**
-   * Shows the dev-only mock identity provider handoff.
+   * Shows the mock identity provider handoff.
    */
   public function mockIdp(Request $request, string $provider): Response {
-    $session = $this->session($request);
-    $provider_config = $this->providerManager->enabledProvider($provider);
-    if (!$this->providerManager->isMockProvider($provider_config)) {
-      throw new HttpException(400, 'Provider is not configured as a mock provider.');
+    try {
+      $provider_config = $this->providerManager->enabledProvider($provider);
+      if (!$this->providerManager->isMockProvider($provider_config)) {
+        return $this->errorJson('mock_not_allowed', 400);
+      }
+      $this->providerManager->assertMockAllowed($provider_config);
+      $session = $this->session($request);
+      $relay_state = $this->relayState->sanitize($provider, $request->query->all()['RelayState'] ?? NULL);
+      return $this->renderMockIdp($provider, $provider_config, $session, $relay_state);
     }
-    $this->providerManager->assertMockAllowed($provider_config);
-    $relay_state = $this->relayState->sanitize($provider, $request->query->get('RelayState'));
+    catch (SsoAuthenticationException) {
+      return $this->errorJson('mock_not_allowed', 403);
+    }
+    catch (\Throwable $exception) {
+      $status = $exception instanceof HttpExceptionInterface ? $exception->getStatusCode() : 500;
+      return $this->errorJson('provider_unavailable', $status);
+    }
+  }
 
+  /**
+   * Renders the development-only mock handoff.
+   *
+   * @param string $provider
+   *   Provider machine name.
+   * @param array<string, mixed> $provider_config
+   *   Provider configuration.
+   * @param \Symfony\Component\HttpFoundation\Session\SessionInterface $session
+   *   Browser session.
+   * @param string $relay_state
+   *   Validated return target.
+   */
+  private function renderMockIdp(string $provider, array $provider_config, SessionInterface $session, string $relay_state): Response {
     $claims = is_array($provider_config['mock_claims'] ?? NULL)
         ? $provider_config['mock_claims']
         : [];
@@ -178,9 +244,9 @@ final class SsoAuthController extends ControllerBase {
     $profile = is_scalar($provider_config['profile'] ?? NULL)
         ? (string) $provider_config['profile']
         : '';
-    $notice = $profile === 'bundid_mock'
-        ? 'Dies ist nicht die echte BundID. Die Seite simuliert den externen Identitaetsanbieter fuer lokale Demos.'
-        : 'Dies ist kein echter Identitaetsanbieter. Die Seite simuliert den externen Identitaetsanbieter fuer lokale Demos.';
+    $notice = $provider === 'bundid_mock' || $profile === 'bundid_mock'
+        ? 'Nachstellung für die Demo, keine echte BundID-Anmeldung.'
+        : 'Nachstellung für die Demo, keine echte Anmeldung beim Identitätsanbieter.';
     $button_label = 'Mit ' . $label . ' fortfahren';
 
     $rows = $this->mockClaimRows($claims);
@@ -201,7 +267,6 @@ final class SsoAuthController extends ControllerBase {
       '.card{width:min(680px,100%);background:#fff;border:1px solid #d7dee8;border-radius:8px;',
       'box-shadow:0 18px 60px rgba(15,23,42,.14);overflow:hidden;}',
       '.top{background:#111827;color:#fff;padding:22px 28px;}',
-      '.top small{display:block;margin-top:6px;color:#cbd5e1;}',
       '.body{padding:26px 28px 28px;}',
       '.notice{margin:0 0 18px;padding:12px 14px;border:1px solid #facc15;',
       'background:#fef9c3;color:#713f12;border-radius:6px;}',
@@ -230,10 +295,9 @@ final class SsoAuthController extends ControllerBase {
         . '<title>' . Html::escape($label) . ' - Demo</title>'
         . '<style>' . $css . '</style></head><body><main><section class="card" aria-labelledby="title">'
         . '<div class="top"><h1 id="title">' . Html::escape($label) . '</h1>'
-        . '<small>Lokaler Mock-Identitaetsanbieter fuer beantragt.ai</small></div>'
+        . '</div>'
         . '<div class="body"><p class="notice">' . Html::escape($notice) . '</p>'
-        . '<p>beantragt.ai fordert eine Demo-Identitaet an. '
-        . 'Diese Attribute wuerden an beantragt.ai uebergeben:</p>'
+        . '<p>Diese Daten der Demo-Identität werden an beantragt.ai übergeben:</p>'
         . '<dl>' . $attributes . '</dl>'
         . '<form class="actions" method="get" action="' . Html::escape($login_url) . '">'
         . '<input type="hidden" name="RelayState" value="' . Html::escape($relay_state) . '">'
@@ -275,7 +339,7 @@ final class SsoAuthController extends ControllerBase {
       }
     }
 
-    return $rows ?: ['Demo-Identitaet' => 'Max Mustermann'];
+    return $rows ?: ['Demo-Identität' => 'Max Mustermann'];
   }
 
   /**
@@ -283,11 +347,11 @@ final class SsoAuthController extends ControllerBase {
    */
   private function consumeMockState(Request $request, string $provider, SessionInterface $session): void {
     $expected = $session->get($this->mockStateKey($provider));
-    $provided = $request->query->get('mockState');
+    $provided = $request->query->all()['mockState'] ?? NULL;
     $session->remove($this->mockStateKey($provider));
 
     if (!is_string($expected) || !is_string($provided) || !hash_equals($expected, $provided)) {
-      throw new HttpException(400, 'Missing or invalid SSO mock state.');
+      throw new HttpException(400, 'login_failed');
     }
   }
 
@@ -299,25 +363,28 @@ final class SsoAuthController extends ControllerBase {
   }
 
   /**
-   * Adds the failure marker and locally generated diagnostic correlation.
+   * Redirects with only the public failure category.
    */
-  private function withSsoError(string $target, string $code, string $correlation): string {
+  private function errorRedirect(Request $request, string $provider, mixed $return_target, string $code): RedirectResponse {
+    $target = $this->relayState->sanitize($provider, $return_target, '/auth/login');
     $parts = UrlHelper::parse($target);
     $query = is_array($parts['query'] ?? NULL) ? $parts['query'] : [];
-    $query['sso_error'] = '1';
-    $query['sso_code'] = $code;
-    $query['sso_correlation'] = $correlation;
+    unset($query['sso_code'], $query['sso_correlation']);
+    $query['sso_error'] = SsoFailureLog::publicCode($code);
 
-    $url = (string) ($parts['path'] ?? '/');
-    $query_string = UrlHelper::buildQuery($query);
-    if ($query_string !== '') {
-      $url .= '?' . $query_string;
-    }
+    $url = $parts['path'] . '?' . UrlHelper::buildQuery($query);
     if (!empty($parts['fragment'])) {
       $url .= '#' . $parts['fragment'];
     }
 
-    return $url;
+    return $this->relayRedirect($request, $url);
+  }
+
+  /**
+   * Returns a public failure category with its HTTP status.
+   */
+  private function errorJson(string $code, int $status): Response {
+    return $this->noStore(new JsonResponse(['error' => ['code' => SsoFailureLog::publicCode($code)]], $status));
   }
 
   /**
@@ -325,7 +392,7 @@ final class SsoAuthController extends ControllerBase {
    */
   private function session(Request $request): SessionInterface {
     if (!$request->hasSession()) {
-      throw new HttpException(500, 'SSO login requires a session.');
+      throw new HttpException(500, 'unavailable');
     }
     return $request->getSession();
   }

@@ -11,12 +11,12 @@ use Symfony\Component\HttpKernel\Event\ResponseEvent;
 use Symfony\Component\HttpKernel\KernelEvents;
 
 /**
- * Preserves no-store on login, acs, and mock_login redirects.
+ * Keeps SSO redirects bodyless and uncacheable.
  */
 final class SsoLoginCacheSubscriber implements EventSubscriberInterface {
 
   /**
-   * Restores no-store after Drupal applies its default no-cache header.
+   * Finalizes the redirect after Drupal updates its headers and target.
    */
   public function onResponse(ResponseEvent $event): void {
     $response = $event->getResponse();
@@ -25,6 +25,7 @@ final class SsoLoginCacheSubscriber implements EventSubscriberInterface {
         && $response instanceof RedirectResponse
         && in_array($route, ['beantragt_sso.login', 'beantragt_sso.acs', 'beantragt_sso.mock_login'], TRUE)) {
       $response->headers->addCacheControlDirective('no-store');
+      $response->setContent('');
     }
   }
 
@@ -32,8 +33,8 @@ final class SsoLoginCacheSubscriber implements EventSubscriberInterface {
    * {@inheritdoc}
    */
   public static function getSubscribedEvents(): array {
-    // Run after Drupal's FinishResponseSubscriber (priority 0).
-    return [KernelEvents::RESPONSE => ['onResponse', -10]];
+    // Drupal's cookie authentication can rebuild the redirect body at -1000.
+    return [KernelEvents::RESPONSE => ['onResponse', -1010]];
   }
 
 }
